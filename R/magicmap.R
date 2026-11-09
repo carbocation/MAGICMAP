@@ -550,7 +550,10 @@ magicmap <- function(data, betaTargetX, sdTargetX, betaComparatorY, sdComparator
   fn <- call_obj[[1]]
   data_name <- call_obj$data
   args <- rlang::call_args(call_obj)
-  arg_vals <- sapply(args[-1], eval.parent, simplify=FALSE)
+  # evaluate arguments where magicmap() was called from; eval.parent inside
+  # sapply() would look in the global environment instead
+  caller_env <- parent.frame()
+  arg_vals <- lapply(args[-1], eval, envir = caller_env)
   clean_call <- as.call(c(fn, data_name, arg_vals))
 
   out <- list(
