@@ -226,3 +226,67 @@ xpred_est_func_sel <- function(data, beta, postp, tol=1e-12, maxit=100){
   }
   return(x)
 }
+
+
+# ---------------------------------------------------------------------------
+# Starting points for fitting a k-component model, in addition to the
+# clustering start. Fully deterministic: no random numbers are drawn.
+#
+# 1. From the fitted model with k-1 components (prev = list(b, p)), if given:
+#    - each of its lines in turn split into two lines either side of it
+#    - all of its lines plus a new line through the variant that is furthest
+#      from every one of them
+# 2. nStarts sets of k slopes spread over the central 90% of the per-variant
+#    ratios y/x by a Halton sequence (a fixed sequence that fills a range
+#    evenly; start i always has the same slopes, so a larger nStarts only
+#    adds starts), with equal proportions.
+#
+# Returns a list of list(b, p).
+# ---------------------------------------------------------------------------
+magicmap_extra_starts <- function(data, k, prev=NULL, nStarts=0){
+  ratios <- data$y/data$x
+  ok <- is.finite(ratios)
+  rng <- stats::quantile(ratios[ok], c(0.05, 0.95), names=FALSE)
+  out <- list()
+  
+  if(!is.null(prev) && length(prev$b) == k-1 && all(is.finite(prev$b)) && all(is.finite(prev$p))){
+    delta <- 0.25*diff(stats::quantile(ratios[ok], c(0.25, 0.75), names=FALSE))
+    for(j in seq_along(prev$b)){
+      out[[length(out)+1]] <- list(b = c(prev$b[-j], prev$b[j] - delta, prev$b[j] + delta),
+                                   p = c(prev$p[-j], prev$p[j]/2, prev$p[j]/2))
+    }
+    d2 <- .magicmap_line_distance(data$x, data$sx, data$y, data$sy, data$re, prev$b)
+    d2_nearest <- apply(d2, 1, min)
+    d2_nearest[!ok] <- -Inf
+    worst <- which.max(d2_nearest)
+    n <- nrow(data)
+    out[[length(out)+1]] <- list(b = c(prev$b, ratios[worst]),
+                                 p = c(prev$p*(1 - 1/n), 1/n))
+  }
+  
+  if(nStarts > 0){
+    # first k primes as the Halton bases, one per slope
+    primes <- c()
+    cand <- 2
+    while(length(primes) < k){
+      if(all(cand %% primes != 0)) primes <- c(primes, cand)
+      cand <- cand + 1
+    }
+    halton <- function(i, base){
+      f <- 1
+      r <- 0
+      while(i > 0){
+        f <- f/base
+        r <- r + f*(i %% base)
+        i <- i %/% base
+      }
+      r
+    }
+    for(i in seq_len(nStarts)){
+      u <- sapply(primes, function(base) halton(i, base))
+      out[[length(out)+1]] <- list(b = rng[1] + u*(rng[2] - rng[1]), p = rep(1/k, k))
+    }
+  }
+  
+  return(out)
+}

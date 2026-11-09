@@ -18,6 +18,7 @@ magicmap(
   forceAllK = FALSE,
   inflateSEs = FALSE,
   TargetXPThreshold = NULL,
+  nStarts = 0,
   estimator = "MLE",
   maxIterations = 1000,
   EMTolerance = 1e-12,
@@ -52,6 +53,8 @@ magicmap(
 
 \item{TargetXPThreshold}{(Optional) P-value threshold that every variant had to pass for the target (x axis) trait in order to be included, e.g. \code{5e-8} for genome-wide significant lead variants. When given, each variant's likelihood is conditioned on having passed that threshold (a truncated bivariate normal), which corrects the overestimation of target effects that are close to the threshold ("winner's curse") and the resulting bias of slopes towards zero. Requires that variants were selected on the target trait alone, using the betas and standard errors supplied in \code{data}; it is an error if any variant does not pass the threshold. Default NULL, which assumes variants were not selected on their target trait association. Not available with \code{estimator="alt_MLE"}. The SCOUTJOY test is not adjusted for selection.}
 
+\item{nStarts}{(Optional) Number of additional starting points to fit each model from. The fitting algorithm (EM) only climbs to the nearest maximum of the likelihood, and mixture likelihoods usually have several, so a single start can return a poor solution. Default 0, which fits each model from a single start (a clustering of the per-variant effect ratios). When greater than 0, each model with more than one component is fit from (1) a clustering of the per-variant effect ratios, (2) when the model with one fewer component was also fit, that solution with each line split in two and with a new line through the variant furthest from all of its lines, and (3) \code{nStarts} sets of slopes spread evenly over the range of the per-variant ratios. The fit with the highest log-likelihood is kept. No random numbers are used, so results are identical on every run. How many starts are needed depends on the data: the \code{n_starts_best} column of \code{fit_stats} gives how many starts reached the best log-likelihood, and results should be checked for stability at a larger value. Because the starts in (2) depend on the fit with one fewer component, a larger \code{nStarts} usually, but not always, gives an equal or higher log-likelihood.}
+
 \item{estimator}{Which estimator to use for the regression slopes. One of "MLE", "alt_MLE", or "numeric".}
 
 \item{maxIterations}{Maximum number of iterations for fitting each mixture model. Applies separately to EM iterations and slope fitting iterations in each M step. Default = 1000.}
@@ -80,7 +83,9 @@ A list of class 'magicmap' containing:
       \item \code{AIC}: Akaike information criterion; lower values indicate a better combination of fit and complexity
       \item \code{converged}: boolean indicator of whether the model fitting converged; set to NA if fitting encountered issues other than convergence (see notes field)
       \item \code{notes}: text description of additional considerations
-      \item \code{iter}: number of EM iterations required for model convergence
+      \item \code{iter}: number of EM iterations required for model convergence, for the starting point that was kept
+      \item \code{n_starts}: number of starting points the model was fit from
+      \item \code{n_starts_best}: how many of those reached the highest log-likelihood; when \code{nStarts} is greater than 0 and this is a small share of \code{n_starts}, a better solution may exist and a larger \code{nStarts} is worth trying
     }
   }
   

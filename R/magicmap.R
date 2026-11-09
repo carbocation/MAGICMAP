@@ -6,6 +6,8 @@
 # * re: scalar, correlation of sampling error between x and y, assumed to be same for all observation pairs
 # * k: scalar, number of  mixture components 
 # * estimator: which slope estimator to use, one of MLE, alt_MLE, or numeric
+# * nStarts: number of evenly spread starting points to fit from, in addition to the clustering start and the starts built from prev; 0 fits from the clustering start only
+# * prev: NULL, or list(b, p) with the slopes and proportions of the fitted model with k-1 components, used to build starting points
 # * tx: NULL, or vector of truncation points for selection on the target trait (variant j was included because |x_j| >= tx_j)
 # * maxIterations: maximum number of iterations for fitting; applies to both EM and M-step regression iterations
 # * EMTolerance: convergence criteria for EM algorithm, in terms of relative change in loglik
@@ -16,7 +18,7 @@
 # structured list of class 'magicmap_single', without scoutjoy_test
 
 
-magicmap_1k <- function(data, re, k, estimator="MLE", maxIterations=1000, EMTolerance=1e-12, InnerTolerance=1e-12, verbose=FALSE, tx=NULL){
+magicmap_1k <- function(data, re, k, estimator="MLE", maxIterations=1000, EMTolerance=1e-12, InnerTolerance=1e-12, verbose=FALSE, tx=NULL, nStarts=0, prev=NULL){
   
   # sanity checks
   if(class(data)[1] != "data.frame"){
@@ -27,6 +29,8 @@ magicmap_1k <- function(data, re, k, estimator="MLE", maxIterations=1000, EMTole
     stop("estimator must be one of \'MLE\', \'alt_MLE\', or \'numeric\'.")
   }
   
+  n_starts <- 1
+  n_starts_best <- 1
   
   dat <- data
   colnames(dat) <- c("x","sx","y","sy")
@@ -166,34 +170,67 @@ magicmap_1k <- function(data, re, k, estimator="MLE", maxIterations=1000, EMTole
       return(c(b_new, p_new, x_new))
     }
     
-    # 3. Bundle initial parameters and run SQUAREM accelerator
-    theta_init <- c(b_est, p_est, x_est)
+    # 3. Fit from one starting point with the SQUAREM accelerator
+    run_start <- function(b0, p0){
+      sq_fit <- SQUAREM::squarem(
+        par = c(b0, p0, xpred_init), 
+        fixptfn = em_fixed_point, 
+        objfn = em_objective,
+        control = list(tol = EMTolerance, maxiter = maxIterations, trace = verbose, minimize = FALSE),
+        # Arguments passed down to the fixpt and obj functions:
+        data = dat, k_comps = k, est_method = estimator, inn_tol = InnerTolerance, max_it = maxIterations
+      )
+      b <- sq_fit$par[1:k]
+      p <- sq_fit$par[(k+1):(2*k)]
+      x <- sq_fit$par[(2*k+1):length(sq_fit$par)]
+      list(b = b, p = p, x = x,
+           # recalculated at the returned parameters: squarem's value.objfn can be from
+           # an earlier evaluation when the fixed point is reached in one or two steps
+           ll = ll_comp_func(dat, b, p, x),
+           iter = sq_fit$fpevals, # Number of times the fixed-point function (EM cycle) was evaluated
+           converge = sq_fit$convergence)
+    }
     
-    sq_fit <- SQUAREM::squarem(
-      par = theta_init, 
-      fixptfn = em_fixed_point, 
-      objfn = em_objective,
-      control = list(tol = EMTolerance, maxiter = maxIterations, trace = verbose, minimize = FALSE),
-      # Arguments passed down to the fixpt and obj functions:
-      data = dat, k_comps = k, est_method = estimator, inn_tol = InnerTolerance, max_it = maxIterations
-    )
+    # 4. Fit from every starting point and keep the highest log-likelihood.
+    # EM only climbs to the nearest maximum of the likelihood, and there are
+    # usually several. The list of starts is fixed and ordered (no random
+    # numbers; see magicmap_extra_starts), and ties go to the earlier start,
+    # so the result is the same on every run. The clustering start is first.
+    start_fits <- list(run_start(b_init, p_init))
+    if(k > 1 && nStarts > 0){
+      for(st in magicmap_extra_starts(dat, k, prev, nStarts)){
+        start_fits[[length(start_fits)+1]] <- tryCatch(run_start(st$b, st$p), error = function(e) NULL)
+      }
+    }
+    n_starts <- length(start_fits)
     
-    # 4. Unpack the final, accelerated parameters back into your script's variables
-    b_est <- sq_fit$par[1:k]
-    p_est <- sq_fit$par[(k+1):(2*k)]
-    x_est <- sq_fit$par[(2*k+1):length(sq_fit$par)]
+    # usable fits: finite log-likelihood and no empty component
+    start_ll <- sapply(start_fits, function(f){
+      if(is.null(f) || !is.finite(f$ll) || any(!is.finite(f$p)) || any(f$p < 1e-8)) -Inf else f$ll
+    })
+    if(any(is.finite(start_ll))){
+      at_best <- start_ll >= max(start_ll) - (1e-6 + 1e-8*abs(max(start_ll)))
+      chosen <- which(at_best)[1]
+      n_starts_best <- sum(at_best)
+    }else{
+      # no usable fit: report the clustering start, as when it was the only one
+      chosen <- 1
+      n_starts_best <- 0
+    }
+    
+    b_est <- start_fits[[chosen]]$b
+    p_est <- start_fits[[chosen]]$p
+    x_est <- start_fits[[chosen]]$x
+    ll_comp <- start_fits[[chosen]]$ll
+    iter <- start_fits[[chosen]]$iter
     
     # Run the E-step one final time with the optimized parameters so post_est is ready for output
     post_est <- estep_posteriors(dat, b_est, p_est, x_est)
-    # recalculated at the returned parameters: squarem's value.objfn can be from
-    # an earlier evaluation when the fixed point is reached in one or two steps
-    ll_comp <- ll_comp_func(dat, b_est, p_est, x_est)
-    iter <- sq_fit$fpevals # Number of times the fixed-point function (EM cycle) was evaluated
     
     # Check if SQUAREM hit the tolerance or maxed out iterations
     # Set convergence flags expected by the rest of the script
     empty_comp <- any(p_est < 1e-8)
-    em_converge <- sq_fit$convergence
+    em_converge <- start_fits[[chosen]]$converge
     em_dec <- NA     
     york_dec <- NA
     
@@ -274,7 +311,9 @@ magicmap_1k <- function(data, re, k, estimator="MLE", maxIterations=1000, EMTole
                            AIC=AIC,
                            converged=em_converge,
                            notes=notes,
-                           iter=iter),
+                           iter=iter,
+                           n_starts=n_starts,
+                           n_starts_best=n_starts_best),
     component_proportions = p_est,
     slopes = parameters,
     predicted_target_betas = x_est,
@@ -304,7 +343,9 @@ magicmap_1k <- function(data, re, k, estimator="MLE", maxIterations=1000, EMTole
                              AIC=NA,
                              converged=F,
                              notes=notes,
-                             iter=iter),
+                             iter=iter,
+                             n_starts=n_starts,
+                             n_starts_best=n_starts_best),
       component_proportions = NA,
       slopes = NA,
       predicted_target_betas = NA,
@@ -367,6 +408,9 @@ magicmap_1k <- function(data, re, k, estimator="MLE", maxIterations=1000, EMTole
 #' @param TargetXPThreshold
 #' (Optional) P-value threshold that every variant had to pass for the target (x axis) trait in order to be included, e.g. \code{5e-8} for genome-wide significant lead variants. When given, each variant's likelihood is conditioned on having passed that threshold (a truncated bivariate normal), which corrects the overestimation of target effects that are close to the threshold ("winner's curse") and the resulting bias of slopes towards zero. Requires that variants were selected on the target trait alone, using the betas and standard errors supplied in \code{data}; it is an error if any variant does not pass the threshold. Default NULL, which assumes variants were not selected on their target trait association. Not available with \code{estimator="alt_MLE"}. The SCOUTJOY test is not adjusted for selection.
 #' 
+#' @param nStarts
+#' (Optional) Number of additional starting points to fit each model from. The fitting algorithm (EM) only climbs to the nearest maximum of the likelihood, and mixture likelihoods usually have several, so a single start can return a poor solution. Default 0, which fits each model from a single start (a clustering of the per-variant effect ratios). When greater than 0, each model with more than one component is fit from (1) a clustering of the per-variant effect ratios, (2) when the model with one fewer component was also fit, that solution with each line split in two and with a new line through the variant furthest from all of its lines, and (3) \code{nStarts} sets of slopes spread evenly over the range of the per-variant ratios. The fit with the highest log-likelihood is kept. No random numbers are used, so results are identical on every run. How many starts are needed depends on the data: the \code{n_starts_best} column of \code{fit_stats} gives how many starts reached the best log-likelihood, and results should be checked for stability at a larger value. Because the starts in (2) depend on the fit with one fewer component, a larger \code{nStarts} usually, but not always, gives an equal or higher log-likelihood.
+#' 
 #' @param estimator
 #' Which estimator to use for the regression slopes. One of "MLE", "alt_MLE", or "numeric".
 #' 
@@ -401,7 +445,9 @@ magicmap_1k <- function(data, re, k, estimator="MLE", maxIterations=1000, EMTole
 #'       \item \code{AIC}: Akaike information criterion; lower values indicate a better combination of fit and complexity
 #'       \item \code{converged}: boolean indicator of whether the model fitting converged; set to NA if fitting encountered issues other than convergence (see notes field)
 #'       \item \code{notes}: text description of additional considerations
-#'       \item \code{iter}: number of EM iterations required for model convergence
+#'       \item \code{iter}: number of EM iterations required for model convergence, for the starting point that was kept
+#'       \item \code{n_starts}: number of starting points the model was fit from
+#'       \item \code{n_starts_best}: how many of those reached the highest log-likelihood; when \code{nStarts} is greater than 0 and this is a small share of \code{n_starts}, a better solution may exist and a larger \code{nStarts} is worth trying
 #'     }
 #'   }
 #'   
@@ -443,7 +489,7 @@ magicmap_1k <- function(data, re, k, estimator="MLE", maxIterations=1000, EMTole
 #' @export 
 #'
 
-magicmap <- function(data, betaTargetX, sdTargetX, betaComparatorY, sdComparatorY, k, ids = NULL, CovIntercept = 0, TargetXIntercept=1, ComparatorYIntercept=1, forceAllK=FALSE, inflateSEs=FALSE, TargetXPThreshold=NULL, estimator="MLE", maxIterations=1000, EMTolerance=1e-12, InnerTolerance=1e-12, verbose=FALSE){
+magicmap <- function(data, betaTargetX, sdTargetX, betaComparatorY, sdComparatorY, k, ids = NULL, CovIntercept = 0, TargetXIntercept=1, ComparatorYIntercept=1, forceAllK=FALSE, inflateSEs=FALSE, TargetXPThreshold=NULL, nStarts=0, estimator="MLE", maxIterations=1000, EMTolerance=1e-12, InnerTolerance=1e-12, verbose=FALSE){
 
   # sanity checks
   if((length(betaTargetX)!=1) || (length(sdTargetX)!=1) || (length(betaComparatorY)!=1) || (length(sdComparatorY)!=1)){
@@ -465,6 +511,10 @@ magicmap <- function(data, betaTargetX, sdTargetX, betaComparatorY, sdComparator
     if(estimator == "alt_MLE"){
       stop("estimator \'alt_MLE\' is not available with TargetXPThreshold; use \'MLE\' or \'numeric\'.")
     }
+  }
+  
+  if(!is.numeric(nStarts) || length(nStarts)!=1 || is.na(nStarts) || nStarts < 0 || nStarts != round(nStarts)){
+    stop("nStarts must be a single whole number, 0 or larger.")
   }
   
   k <- sort(k)
@@ -520,6 +570,12 @@ magicmap <- function(data, betaTargetX, sdTargetX, betaComparatorY, sdComparator
       print(paste0("Testing k = ",k[i],"...")) 
     }
 
+    # starting points for k components can be built from the fit with k-1 components
+    prev <- NULL
+    if(i > 1 && k[i] == k[i-1] + 1 && is.data.frame(slopes[[i-1]])){
+      prev <- list(b = slopes[[i-1]]$b, p = priors[[i-1]])
+    }
+    
     mod <- magicmap_1k(data=data, 
                        re=re, 
                        k=k[i], 
@@ -528,7 +584,9 @@ magicmap <- function(data, betaTargetX, sdTargetX, betaComparatorY, sdComparator
                        EMTolerance=EMTolerance, 
                        InnerTolerance=InnerTolerance, 
                        verbose=verbose,
-                       tx=tx)
+                       tx=tx,
+                       nStarts=nStarts,
+                       prev=prev)
     
     fits <- rbind(fits, mod$fit_stats)
     priors[[i]] <- mod$component_proportions
