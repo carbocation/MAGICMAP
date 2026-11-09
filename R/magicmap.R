@@ -419,7 +419,7 @@ magicmap <- function(data, betaTargetX, sdTargetX, betaComparatorY, sdComparator
   data <- data[, c(betaTargetX, sdTargetX, betaComparatorY, sdComparatorY)]
   if(any(is.na(data))){
     na_rows <- apply(data,1,function(a) any(is.na(a)))
-    warning(paste("Removing",na_rows,"rows with missing values"))
+    warning(paste("Removing",sum(na_rows),"rows with missing values"))
     data <- data[!na_rows, ]
   }
   
