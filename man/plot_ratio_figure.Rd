@@ -37,7 +37,7 @@ plot_ratio_figure(
 
 \item{output_forest_data}{whether to output the "raw" plotted data, the summarized values for the "forest" plot, or "none" (default)}
 
-\item{which_model}{numeric, which model to plot (when multiple models were fit). Default is the model with lowest BIC.}
+\item{which_model}{numeric, which model to plot (when multiple models were fit). Default is the lowest-BIC model among those that converged (\code{converged == TRUE}), or the lowest-BIC model overall if none converged.}
 
 \item{CovIntercept}{For old MAGICMAP objects without saved call information, the intercept from LDSC (Bulik-Sullivan et al. 2015) genetic correlation analysis (\code{gcov_int}) used to fit MAGICMAP.}
 

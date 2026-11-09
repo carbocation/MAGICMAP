@@ -53,13 +53,13 @@
 #' Extract single model from MAGICMAP results object
 #' 
 #' @description
-#' Extracts one model from a MAGICMAP results object. By default, selects the best fit model based on BIC.
+#' Extracts one model from a MAGICMAP results object. By default, selects the lowest-BIC model among those that converged.
 #' 
 #' @param model
 #' output of \code{\link{magicmap}()}
 #' 
 #' @param which_model
-#' numeric, which model to select (when multiple models were fit). Default is the model with lowest BIC.
+#' numeric, which model to select (when multiple models were fit). Default is the lowest-BIC model among those that converged (\code{converged == TRUE}), or the lowest-BIC model overall if none converged.
 #' 
 #' @param hide_warnings
 #' Logical, whether to skip printing warnings (highly discouraged)
@@ -150,7 +150,14 @@ extract_magicmap_model <- function(model, which_model=NULL, hide_warnings=FALSE)
   }else{
     
     if(is.null(which_model)){
-      which_model <- which.min(model$fit_stats$BIC)
+      # choose among fits that converged cleanly; a collapsed or failed fit
+      # (converged NA or FALSE) can have the lowest BIC but should not be chosen
+      ok <- which(model$fit_stats$converged %in% TRUE)
+      if(length(ok) > 0){
+        which_model <- ok[which.min(model$fit_stats$BIC[ok])]
+      }else{
+        which_model <- which.min(model$fit_stats$BIC)
+      }
     }
     
     if(!hide_warnings){

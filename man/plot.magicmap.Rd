@@ -56,7 +56,7 @@
 \arguments{
 \item{model}{output of \code{\link{magicmap}()}}
 
-\item{which_model}{numeric, which model to plot (when multiple models were fit). Default is the model with lowest BIC.}
+\item{which_model}{numeric, which model to plot (when multiple models were fit). Default is the lowest-BIC model among those that converged (\code{converged == TRUE}), or the lowest-BIC model overall if none converged.}
 
 \item{class_thresh}{threshold of posterior probability to use for assigning variants to components}
 

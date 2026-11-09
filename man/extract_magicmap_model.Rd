@@ -9,7 +9,7 @@ extract_magicmap_model(model, which_model = NULL, hide_warnings = FALSE)
 \arguments{
 \item{model}{output of \code{\link{magicmap}()}}
 
-\item{which_model}{numeric, which model to select (when multiple models were fit). Default is the model with lowest BIC.}
+\item{which_model}{numeric, which model to select (when multiple models were fit). Default is the lowest-BIC model among those that converged (\code{converged == TRUE}), or the lowest-BIC model overall if none converged.}
 
 \item{hide_warnings}{Logical, whether to skip printing warnings (highly discouraged)}
 }
@@ -68,5 +68,5 @@ A list of class 'magicmap_single' containing:
 Unlike a full 'magicmap' object, the \code{component_proportions}, \code{slopes}, \code{predicted_target_betas}, and \code{posteriors} fields are from a single regression model, and so are not nested lists and are not named for the number of fitted components (e.g. \code{mix2components}, \code{mix3components}, etc). Mixture components in the fitted model are ordered from highest to lowest slope.
 }
 \description{
-Extracts one model from a MAGICMAP results object. By default, selects the best fit model based on BIC.
+Extracts one model from a MAGICMAP results object. By default, selects the lowest-BIC model among those that converged.
 }

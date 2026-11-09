@@ -27,7 +27,7 @@
 #' output of \code{\link{magicmap}()}
 #' 
 #' @param which_model
-#' numeric, which model to plot (when multiple models were fit). Default is the model with lowest BIC.
+#' numeric, which model to plot (when multiple models were fit). Default is the lowest-BIC model among those that converged (\code{converged == TRUE}), or the lowest-BIC model overall if none converged.
 #' 
 #' @param class_thresh
 #' threshold of posterior probability to use for assigning variants to components
@@ -508,7 +508,7 @@ plot.magicmap_single <- plot.magicmap
 #' whether to output the "raw" plotted data, the summarized values for the "forest" plot, or "none" (default) 
 #' 
 #' @param which_model
-#' numeric, which model to plot (when multiple models were fit). Default is the model with lowest BIC.
+#' numeric, which model to plot (when multiple models were fit). Default is the lowest-BIC model among those that converged (\code{converged == TRUE}), or the lowest-BIC model overall if none converged.
 #' 
 #' @param CovIntercept 
 #' For old MAGICMAP objects without saved call information, the intercept from LDSC (Bulik-Sullivan et al. 2015) genetic correlation analysis (\code{gcov_int}) used to fit MAGICMAP. 
