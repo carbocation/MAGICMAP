@@ -26,15 +26,15 @@
     # use defaults if unspecified
     ldsc_defaulted <- NULL
     if(is.null(CovIntercept)){
-      ldsc_defaulted <- c(ldsc_in_call, "CovIntercept")
+      ldsc_defaulted <- c(ldsc_defaulted, "CovIntercept")
       CovIntercept <- 0
     }
     if(is.null(TargetXIntercept)){
-      ldsc_defaulted <- c(ldsc_in_call, "TargetXIntercept")
+      ldsc_defaulted <- c(ldsc_defaulted, "TargetXIntercept")
       TargetXIntercept <- 1
     }
     if(is.null(ComparatorYIntercept)){
-      ldsc_defaulted <- c(ldsc_in_call, "ComparatorYIntercept")
+      ldsc_defaulted <- c(ldsc_defaulted, "ComparatorYIntercept")
       ComparatorYIntercept <- 1
     }
     if(!is.null(ldsc_defaulted)){
@@ -42,7 +42,7 @@
     }
   }
   
-  re <- CovIntercept * sqrt(TargetXIntercept*ComparatorYIntercept)
+  re <- CovIntercept / sqrt(TargetXIntercept*ComparatorYIntercept)  # must match magicmap()
 
   return(re)
 }
