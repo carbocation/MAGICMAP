@@ -219,7 +219,7 @@ plot.magicmap <- function(model, which_model=NULL, class_thresh=0.95, diagnostic
   }
   
   if(!("ylim" %in% names(args))){
-    args$ylim <- c(min(0,min(y-sy)), 1.25*max(y+sy))
+    args$ylim <- c(min(0,min(y-sy)), max(0,1.25*max(y+sy)))
   }
   
   if(!("main" %in% names(args))){
