@@ -92,7 +92,7 @@
 #'   }
 #'   
 #'   \item{\code{slopes}}{
-#'     Estimated slope in each mixture component. SEs are currently always NA.
+#'     Data frame with the estimated slope (\code{b}) for each mixture component and its standard error. \code{se} is a robust (sandwich) SE and \code{se_model} is the model-based SE; both use the observed information of the mixture likelihood, so they account for uncertainty in which component each variant belongs to. \code{se} is recommended because it remains valid when slopes vary somewhat among variants within a component. SEs are NA when the fit failed.
 #'   }
 #'   
 #'   \item{\code{predicted_target_betas}}{

@@ -203,9 +203,27 @@ magicmap_1k <- function(data, re, k, estimator="MLE", maxIterations=1000, EMTole
   rownames(post_est) <- rownames(data)
   posteriors <- cbind(data,post_est)
   
+  # standard errors from the observed information of the mixture likelihood
+  # (see magicmap_variance.R); se is the sandwich (robust) SE, se_model the
+  # model-based SE
+  se_slope <- rep(NA_real_, k)
+  se_model <- rep(NA_real_, k)
+  if(is.finite(ll_comp) && !empty_comp){
+    vc <- tryCatch(magicmap_vcov(dat, b_est, p_est, x_est),
+                   error = function(e){
+                     warning(paste0("Could not calculate SEs for k=", k, ": ", conditionMessage(e)))
+                     NULL
+                   })
+    if(!is.null(vc)){
+      se_slope <- vc$se_slope_robust
+      se_model <- vc$se_slope
+    }
+  }
+
   parameters <- data.frame(
-    b = b_est, 
-    se = NA
+    b = b_est,
+    se = se_slope,
+    se_model = se_model
   )
 
   notes <- ""
@@ -366,7 +384,7 @@ magicmap_1k <- function(data, re, k, estimator="MLE", maxIterations=1000, EMTole
 #'   }
 #'   
 #'   \item{\code{slopes}}{
-#'     Estimated slope in each mixture component. SEs are currently always NA.
+#'     Data frame with the estimated slope (\code{b}) for each mixture component and its standard error. \code{se} is a robust (sandwich) SE and \code{se_model} is the model-based SE; both use the observed information of the mixture likelihood, so they account for uncertainty in which component each variant belongs to. \code{se} is recommended because it remains valid when slopes vary somewhat among variants within a component. SEs are NA when the fit failed.
 #'   }
 #'   
 #'   \item{\code{predicted_target_betas}}{
@@ -484,67 +502,6 @@ magicmap <- function(data, betaTargetX, sdTargetX, betaComparatorY, sdComparator
   names(xpreds) <- paste0("mix",k,"components")
   names(posts) <- paste0("mix",k,"components")
 
-  # Gemini code, past initial inspection. I haven't verified the math yet
-  # =================================================================
-  # POST-HOC STANDARD ERROR CALCULATION (Lowest BIC Model Only)
-  # =================================================================
-    # 1. Identify the "winning" model based on lowest BIC
-    best_i <- which.min(fits$BIC)  # integer(0) if no model has a finite BIC
-    best_k <- fits$k_components[best_i]
-
-    # Only calculate if the winning model exists and actually converged
-    if (length(best_i) == 1 && isTRUE(fits$converged[best_i]) && best_k > 0) {
-      print(paste0("Calculating SE for the model with ", best_k, " components"))
-      
-      # 2. Extract the converged parameters for this specific model
-      b_best <- slopes[[best_i]]$b
-      x_best <- xpreds[[best_i]]
-      p_best <- priors[[best_i]]
-      # Extract just the probability columns and convert to matrix
-      post_best <- as.matrix(posts[[best_i]][, -c(1:4)]) 
-      
-      # Recreate the formatted data for the gradient function
-      dat_hess <- data
-      colnames(dat_hess) <- c("x","sx","y","sy")
-      dat_hess$re <- rep(re, nrow(dat_hess))
-      
-      # 3. Calculate the Hessian
-      theta_hat <- c(b_best, x_best)
-      n_obs <- nrow(dat_hess)
-      
-      H_start_time <- Sys.time()
-      H_full <- numDeriv::jacobian(func = mstep_gradient_func, 
-                                   x = theta_hat, 
-                                   data = dat_hess, 
-                                   priorp = pmax(p_best, 1e-16), 
-                                   postp = post_best)
-      
-      # 4. Schur Complement
-      H_bb <- H_full[1:best_k, 1:best_k, drop=FALSE]
-      H_xx_diag <- diag(H_full[(best_k+1):(n_obs+best_k), (best_k+1):(n_obs+best_k)])
-      H_bx <- H_full[1:best_k, (best_k+1):(n_obs+best_k), drop=FALSE]
-      H_xb <- H_full[(best_k+1):(n_obs+best_k), 1:best_k, drop=FALSE]
-      
-      penalty_term <- H_bx %*% (H_xb / H_xx_diag)
-      info_matrix_b <- -H_bb + penalty_term
-      
-      # 5. Invert and assign
-      tryCatch({
-        cov_b <- solve(info_matrix_b)
-        se_best <- sqrt(diag(cov_b))
-        
-        # Overwrite the NAs in the slopes list for the winning model!
-        slopes[[best_i]]$se <- se_best          
-      }, error = function(e) {
-        # Printing the actual error message 'e' helps debug typos vs. actual singular matrices!
-        warning(paste("Error calculating SE for best model (k=", best_k, "): ", e$message, sep=""))
-      })
-      H_end_time <- Sys.time()
-      print(paste0('Calculation of the variance-covariance matrix took ',as.numeric(H_end_time - H_start_time, units = "secs"), ' secs.'))
-    }
-  # End Gemini code
-  # =================================================================
-  
   # record call
   call_obj <- rlang::call_match(defaults=TRUE)
   fn <- call_obj[[1]]
