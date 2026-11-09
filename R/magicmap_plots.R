@@ -601,10 +601,10 @@ plot_ratio_figure <- function(model, target_name=NULL, comparator_name=NULL, pan
   selected_model <- extract_magicmap_model(model, which_model=which_model, hide_warnings=FALSE)
 
   if(is.null(target_name)){
-    target_name <- colnames(model$posteriors)[1]
+    target_name <- colnames(selected_model$posteriors)[1]
   }
   if(is.null(comparator_name)){
-    comparator_name <- colnames(model$posteriors)[3]
+    comparator_name <- colnames(selected_model$posteriors)[3]
   }
 
   k <- selected_model$fit_stats$k_components[1]
