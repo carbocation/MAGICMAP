@@ -2,7 +2,8 @@
 #
 # Uses the observed information of the mixture (incomplete-data) log-likelihood
 #   l = sum_j log sum_k pi_k * phi([x_j, y_j]; [X_j, theta_k X_j], Sigma_j)
-# rather than the Hessian of the EM Q function. The Q-function Hessian treats
+# (minus sum_j log A_j(X_j) when variants were selected on the target trait,
+# see selection_logprob) rather than the Hessian of the EM Q function. The Q-function Hessian treats
 # component memberships as known and so understates uncertainty when
 # components overlap (Louis 1982).
 #
@@ -13,7 +14,7 @@
 # Parameters reported: theta_1..theta_K, pi_1..pi_{K-1}  (pi_K = 1 - sum).
 #
 # Arguments:
-# * data: data frame with columns x, sx, y, sy, re
+# * data: data frame with columns x, sx, y, sy, re, and optionally tx
 # * beta, priorp, xpred: fitted slopes, mixing proportions, and latent X
 #
 # Returns list with:
@@ -104,6 +105,11 @@ magicmap_vcov <- function(data, beta, priorp, xpred){
       H[,l,i] <- H[,i,l]
     }
   }
+
+  # selection on the target trait: -log A_j(X_j) only involves X_j
+  sel <- selection_logprob(data, X, derivs=TRUE)
+  S[,npar] <- S[,npar] - sel$d1
+  H[,npar,npar] <- H[,npar,npar] - sel$d2
 
   # profile out each X_j
   h_xx <- H[,npar,npar]

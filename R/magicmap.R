@@ -6,6 +6,7 @@
 # * re: scalar, correlation of sampling error between x and y, assumed to be same for all observation pairs
 # * k: scalar, number of  mixture components 
 # * estimator: which slope estimator to use, one of MLE, alt_MLE, or numeric
+# * tx: NULL, or vector of truncation points for selection on the target trait (variant j was included because |x_j| >= tx_j)
 # * maxIterations: maximum number of iterations for fitting; applies to both EM and M-step regression iterations
 # * EMTolerance: convergence criteria for EM algorithm, in terms of relative change in loglik
 # * InnerTolerance: convergence criteria for fitting slope at M step, in terms of relative change in loglik
@@ -15,7 +16,7 @@
 # structured list of class 'magicmap_single', without scoutjoy_test
 
 
-magicmap_1k <- function(data, re, k, estimator="MLE", maxIterations=1000, EMTolerance=1e-12, InnerTolerance=1e-12, verbose=FALSE){
+magicmap_1k <- function(data, re, k, estimator="MLE", maxIterations=1000, EMTolerance=1e-12, InnerTolerance=1e-12, verbose=FALSE, tx=NULL){
   
   # sanity checks
   if(class(data)[1] != "data.frame"){
@@ -31,10 +32,20 @@ magicmap_1k <- function(data, re, k, estimator="MLE", maxIterations=1000, EMTole
   colnames(dat) <- c("x","sx","y","sy")
   dat$re <- rep(re,nrow(dat))
   
+  # selection on the target trait (see selection_logprob)
+  selected <- !is.null(tx)
+  if(selected){
+    if(estimator == "alt_MLE"){
+      stop("estimator \'alt_MLE\' is not available with TargetXPThreshold; use \'MLE\' or \'numeric\'.")
+    }
+    dat$tx <- tx
+  }
+  
   ##################  
   
   # single component
-  if(k==1){
+  # (york regression has no selection term, so with selection k=1 is fit by the EM code below)
+  if(k==1 && !selected){
     york <- suppressWarnings(yorktools::york(dat,intercept=0,method = "ML",tol=InnerTolerance,maxit=maxIterations,verbose=verbose))
     b_est <- york$b[1]
     p_est <- 1
@@ -54,7 +65,11 @@ magicmap_1k <- function(data, re, k, estimator="MLE", maxIterations=1000, EMTole
     ratio_var <- dat$sy^2/dat$x^2 + 
                     dat$y^2*dat$sx^2/dat$x^4 -
                     2*re*dat$y*dat$sy*dat$sx/dat$x^3
-    init_clust <- Ckmeans.1d.dp::Ckmeans.1d.dp(ratios,k=k,y=1/ratio_var)$cluster
+    if(k==1){
+      init_clust <- rep(1, nrow(dat))
+    }else{
+      init_clust <- Ckmeans.1d.dp::Ckmeans.1d.dp(ratios,k=k,y=1/ratio_var)$cluster
+    }
     
     # initial parameters
     b_init <- rep(NA,k)
@@ -134,8 +149,9 @@ magicmap_1k <- function(data, re, k, estimator="MLE", maxIterations=1000, EMTole
             b_new <- slope_est_func2(data, b_new, post_curr)
           }
           
-          x_new <- xpred_est_func(data, b_new, post_curr)
-          ll_Q_y_new <- sum(Q_loglik_matrix(data, b_new, p_new, x_new, post_curr))
+          x_new <- xpred_est_func_sel(data, b_new, post_curr)
+          ll_Q_y_new <- sum(Q_loglik_matrix(data, b_new, p_new, x_new, post_curr)) - 
+                          sum(selection_logprob(data, x_new)$logA)
           
           # Check inner York convergence
           if(abs((ll_Q_y_new - ll_Q_y_old) / ll_Q_y_new) < inn_tol) {
@@ -169,7 +185,9 @@ magicmap_1k <- function(data, re, k, estimator="MLE", maxIterations=1000, EMTole
     
     # Run the E-step one final time with the optimized parameters so post_est is ready for output
     post_est <- estep_posteriors(dat, b_est, p_est, x_est)
-    ll_comp <- sq_fit$value.objfn
+    # recalculated at the returned parameters: squarem's value.objfn can be from
+    # an earlier evaluation when the fixed point is reached in one or two steps
+    ll_comp <- ll_comp_func(dat, b_est, p_est, x_est)
     iter <- sq_fit$fpevals # Number of times the fixed-point function (EM cycle) was evaluated
     
     # Check if SQUAREM hit the tolerance or maxed out iterations
@@ -196,7 +214,7 @@ magicmap_1k <- function(data, re, k, estimator="MLE", maxIterations=1000, EMTole
     idx <- order(b_est, decreasing=T)
     b_est <- b_est[idx]
     p_est <- p_est[idx]
-    post_est <- post_est[,idx]
+    post_est <- post_est[,idx,drop=FALSE]
   }
   
   colnames(post_est) <- paste0("ProbClass",1:k)
@@ -341,6 +359,9 @@ magicmap_1k <- function(data, re, k, estimator="MLE", maxIterations=1000, EMTole
 #' @param inflateSEs
 #' Logical, whether to apply LSDC h2 intercept adjustment to the input standard errors. By default, input SEs are used as given.
 #' 
+#' @param TargetXPThreshold
+#' (Optional) P-value threshold that every variant had to pass for the target (x axis) trait in order to be included, e.g. \code{5e-8} for genome-wide significant lead variants. When given, each variant's likelihood is conditioned on having passed that threshold (a truncated bivariate normal), which corrects the overestimation of target effects that are close to the threshold ("winner's curse") and the resulting bias of slopes towards zero. Requires that variants were selected on the target trait alone, using the betas and standard errors supplied in \code{data}; it is an error if any variant does not pass the threshold. Default NULL, which assumes variants were not selected on their target trait association. Not available with \code{estimator="alt_MLE"}. The SCOUTJOY test is not adjusted for selection.
+#' 
 #' @param estimator
 #' Which estimator to use for the regression slopes. One of "MLE", "alt_MLE", or "numeric".
 #' 
@@ -369,7 +390,7 @@ magicmap_1k <- function(data, re, k, estimator="MLE", maxIterations=1000, EMTole
 #'   \item{\code{fit_stats}}{
 #'     Table of fit statistics for the mixture model with each requested value of \code{k}. Includes:
 #'     \itemize{
-#'       \item \code{logLik}: log of the complete data (marginal) likelihood
+#'       \item \code{logLik}: log of the complete data (marginal) likelihood; conditional on selection when \code{TargetXPThreshold} is given, so not comparable to a fit without it
 #'       \item \code{model_df}: the number of free paramters in the model, excluding nuisance parameters
 #'       \item \code{BIC}: Bayesian information criterion; lower values indicate a better combination of fit and complexity
 #'       \item \code{AIC}: Akaike information criterion; lower values indicate a better combination of fit and complexity
@@ -413,7 +434,7 @@ magicmap_1k <- function(data, re, k, estimator="MLE", maxIterations=1000, EMTole
 #' @export 
 #'
 
-magicmap <- function(data, betaTargetX, sdTargetX, betaComparatorY, sdComparatorY, k, ids = NULL, CovIntercept = 0, TargetXIntercept=1, ComparatorYIntercept=1, forceAllK=FALSE, inflateSEs=FALSE, estimator="MLE", maxIterations=1000, EMTolerance=1e-12, InnerTolerance=1e-12, verbose=FALSE){
+magicmap <- function(data, betaTargetX, sdTargetX, betaComparatorY, sdComparatorY, k, ids = NULL, CovIntercept = 0, TargetXIntercept=1, ComparatorYIntercept=1, forceAllK=FALSE, inflateSEs=FALSE, TargetXPThreshold=NULL, estimator="MLE", maxIterations=1000, EMTolerance=1e-12, InnerTolerance=1e-12, verbose=FALSE){
 
   # sanity checks
   if((length(betaTargetX)!=1) || (length(sdTargetX)!=1) || (length(betaComparatorY)!=1) || (length(sdComparatorY)!=1)){
@@ -426,6 +447,15 @@ magicmap <- function(data, betaTargetX, sdTargetX, betaComparatorY, sdComparator
   
   if(!(estimator %in% c("MLE","alt_MLE","numeric"))){
     stop("estimator must be one of \'MLE\', \'alt_MLE\', or \'numeric\'.")
+  }
+  
+  if(!is.null(TargetXPThreshold)){
+    if(!is.numeric(TargetXPThreshold) || length(TargetXPThreshold)!=1 || is.na(TargetXPThreshold) || TargetXPThreshold <= 0 || TargetXPThreshold >= 1){
+      stop("TargetXPThreshold must be a single p-value threshold between 0 and 1, or NULL.")
+    }
+    if(estimator == "alt_MLE"){
+      stop("estimator \'alt_MLE\' is not available with TargetXPThreshold; use \'MLE\' or \'numeric\'.")
+    }
   }
   
   k <- sort(k)
@@ -442,6 +472,20 @@ magicmap <- function(data, betaTargetX, sdTargetX, betaComparatorY, sdComparator
   }
   
   data[, c(betaComparatorY, betaTargetX)] <- data[, c(betaComparatorY, betaTargetX)] * sign(data[, betaTargetX[1]])
+  
+  # selection on the target trait: variants were included because |beta/se| passed
+  # the z threshold, using the SEs as supplied (before any inflation below)
+  tx <- NULL
+  if(!is.null(TargetXPThreshold)){
+    z_threshold <- stats::qnorm(TargetXPThreshold/2, lower.tail=FALSE)
+    z_target <- abs(data[,betaTargetX]/data[,sdTargetX])
+    if(any(z_target < z_threshold)){
+      stop(paste0(sum(z_target < z_threshold), " variants do not pass TargetXPThreshold=", TargetXPThreshold,
+                  " for the target trait (smallest |z| = ", signif(min(z_target),4), ", threshold |z| = ", signif(z_threshold,4),
+                  "). Remove them or give the threshold that was actually used to select variants."))
+    }
+    tx <- z_threshold*data[,sdTargetX]
+  }
   
   # handle covariance
   re <- CovIntercept / sqrt(TargetXIntercept*ComparatorYIntercept)
@@ -473,7 +517,8 @@ magicmap <- function(data, betaTargetX, sdTargetX, betaComparatorY, sdComparator
                        maxIterations=maxIterations, 
                        EMTolerance=EMTolerance, 
                        InnerTolerance=InnerTolerance, 
-                       verbose=verbose)
+                       verbose=verbose,
+                       tx=tx)
     
     fits <- rbind(fits, mod$fit_stats)
     priors[[i]] <- mod$component_proportions

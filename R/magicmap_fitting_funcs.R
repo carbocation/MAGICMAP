@@ -102,7 +102,8 @@ ll_comp_func <- function(data, beta, priorp, xpred){
   sum_exp <- llmax
   ok <- is.finite(llmax)
   sum_exp[ok] <- llmax[ok] + log(rowSums(exp(llik[ok,,drop=FALSE]-llmax[ok])))
-  out <- sum(sum_exp)
+  # condition on selection for the target trait (zero when there was none)
+  out <- sum(sum_exp) - sum(selection_logprob(data, xpred)$logA)
   return(out)
 }
 
@@ -130,7 +131,7 @@ mstep_optim_func <- function(params, data, priorp, postp){
                             log=T))})
     
   }
-  return(sum(llik))
+  return(sum(llik) - sum(selection_logprob(data, xpred)$logA))
 }
 
 
@@ -160,8 +161,92 @@ mstep_gradient_func <- function(params, data, priorp, postp){
           data$sx^2*(beta[k]*data$y-beta[k]^2*xpred)
       )
   }
-  x_grad <- rowSums(x_grad_k)
+  x_grad <- rowSums(x_grad_k) - selection_logprob(data, xpred, derivs=TRUE)$d1
   
   return(c(beta_grad,x_grad))
   
+}
+
+
+# ---------------------------------------------------------------------------
+# Selection on the target (x) trait
+#
+# When variants were included because their target-trait association passed a
+# significance threshold, |x_j| >= tx_j (tx_j = z threshold * the SE used for
+# selection), each variant's likelihood is conditioned on that event:
+#   l_j = log sum_k pi_k * phi([x_j, y_j]; [X_j, theta_k X_j], Sigma_j) - log A_j(X_j)
+#   A_j(X) = P(|x_j| >= tx_j | X) = pnorm((X - tx_j)/sx_j) + pnorm((-X - tx_j)/sx_j)
+# A_j depends only on the latent target effect X_j, not on the slopes or
+# mixing proportions, so the E step and the slope update given X are unchanged;
+# only the log-likelihood, the update of X, and the information matrix change.
+#
+# data$tx holds the truncation points; when it is absent there is no selection
+# and every function below returns the uncorrected result.
+# ---------------------------------------------------------------------------
+
+# log A_j(X_j) and its first two derivatives with respect to X_j
+selection_logprob <- function(data, xpred, derivs=FALSE){
+  n <- nrow(data)
+  if(is.null(data$tx)){
+    out <- list(logA=rep(0, n))
+    if(derivs){
+      out$d1 <- rep(0, n)
+      out$d2 <- rep(0, n)
+    }
+    return(out)
+  }
+  s <- data$sx
+  a <- (xpred - data$tx)/s
+  b <- (-xpred - data$tx)/s
+  la <- stats::pnorm(a, log.p=TRUE)
+  lb <- stats::pnorm(b, log.p=TRUE)
+  m <- pmax(la, lb)
+  logA <- m + log(exp(la - m) + exp(lb - m))
+  out <- list(logA=logA)
+  if(derivs){
+    # ratios phi(.)/A, computed on the log scale
+    ra <- exp(stats::dnorm(a, log=TRUE) - logA)
+    rb <- exp(stats::dnorm(b, log=TRUE) - logA)
+    out$d1 <- (ra - rb)/s
+    out$d2 <- -(a*ra + b*rb)/s^2 - out$d1^2
+  }
+  return(out)
+}
+
+# M-step update of the latent target effects under selection.
+# For each variant the Q function in X is
+#   -0.5*h*(X - X0)^2 - log A(X)
+# where X0 is the update without selection (xpred_est_func) and h its
+# precision. h >= 1/sx^2 and d2/dX2 log A > -1/sx^2, so this is strictly
+# concave with its maximum between 0 and X0; solved by Newton steps kept
+# inside that bracket.
+xpred_est_func_sel <- function(data, beta, postp, tol=1e-12, maxit=100){
+  x0 <- xpred_est_func(data, beta, postp)
+  if(is.null(data$tx)){
+    return(x0)
+  }
+  covs <- data$re*data$sx*data$sy
+  D <- data$sx^2*data$sy^2 - covs^2
+  h <- rep(0, nrow(data))
+  for(k in 1:length(beta)){
+    h <- h + postp[,k]*(data$sy^2 + beta[k]^2*data$sx^2 - 2*beta[k]*covs)/D
+  }
+  lo <- pmin(0, x0)
+  hi <- pmax(0, x0)
+  x <- x0
+  for(i in 1:maxit){
+    sel <- selection_logprob(data, x, derivs=TRUE)
+    grad <- -h*(x - x0) - sel$d1
+    hess <- -h - sel$d2
+    # the gradient is decreasing in X, so its sign says which side the maximum is on
+    lo <- ifelse(grad > 0, x, lo)
+    hi <- ifelse(grad < 0, x, hi)
+    x_new <- x - grad/hess
+    outside <- !is.finite(x_new) | x_new < lo | x_new > hi
+    x_new[outside] <- ((lo + hi)/2)[outside]
+    done <- all(abs(x_new - x) <= tol*(abs(x) + data$sx))
+    x <- x_new
+    if(done) break
+  }
+  return(x)
 }

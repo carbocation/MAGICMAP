@@ -17,6 +17,7 @@ magicmap(
   ComparatorYIntercept = 1,
   forceAllK = FALSE,
   inflateSEs = FALSE,
+  TargetXPThreshold = NULL,
   estimator = "MLE",
   maxIterations = 1000,
   EMTolerance = 1e-12,
@@ -49,6 +50,8 @@ magicmap(
 
 \item{inflateSEs}{Logical, whether to apply LSDC h2 intercept adjustment to the input standard errors. By default, input SEs are used as given.}
 
+\item{TargetXPThreshold}{(Optional) P-value threshold that every variant had to pass for the target (x axis) trait in order to be included, e.g. \code{5e-8} for genome-wide significant lead variants. When given, each variant's likelihood is conditioned on having passed that threshold (a truncated bivariate normal), which corrects the overestimation of target effects that are close to the threshold ("winner's curse") and the resulting bias of slopes towards zero. Requires that variants were selected on the target trait alone, using the betas and standard errors supplied in \code{data}; it is an error if any variant does not pass the threshold. Default NULL, which assumes variants were not selected on their target trait association. Not available with \code{estimator="alt_MLE"}. The SCOUTJOY test is not adjusted for selection.}
+
 \item{estimator}{Which estimator to use for the regression slopes. One of "MLE", "alt_MLE", or "numeric".}
 
 \item{maxIterations}{Maximum number of iterations for fitting each mixture model. Applies separately to EM iterations and slope fitting iterations in each M step. Default = 1000.}
@@ -71,7 +74,7 @@ A list of class 'magicmap' containing:
   \item{\code{fit_stats}}{
     Table of fit statistics for the mixture model with each requested value of \code{k}. Includes:
     \itemize{
-      \item \code{logLik}: log of the complete data (marginal) likelihood
+      \item \code{logLik}: log of the complete data (marginal) likelihood; conditional on selection when \code{TargetXPThreshold} is given, so not comparable to a fit without it
       \item \code{model_df}: the number of free paramters in the model, excluding nuisance parameters
       \item \code{BIC}: Bayesian information criterion; lower values indicate a better combination of fit and complexity
       \item \code{AIC}: Akaike information criterion; lower values indicate a better combination of fit and complexity
