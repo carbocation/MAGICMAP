@@ -958,7 +958,7 @@ plot_ratio_figure <- function(model, target_name=NULL, comparator_name=NULL, pan
   ###
   if(output_forest_data=="raw"){
     return(mc)
-  }else if(output_forest_data=="summary"){
+  }else if(output_forest_data=="forest"){
     return(forest)
   }
   
