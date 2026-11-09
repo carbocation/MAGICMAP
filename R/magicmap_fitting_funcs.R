@@ -97,10 +97,12 @@ ll_comp_func <- function(data, beta, priorp, xpred){
                                         data$re[a]*data$sx[a]*data$sy[a], data$sy[a]^2),2,2),
                          log=T)})
   }
+  # log-sum-exp across components, so SNPs far from every line don't underflow to -Inf
   llmax <- apply(llik,1,max)
-  sum_exp <- llmax + log(rowSums(exp(llik-llmax)))
+  sum_exp <- llmax
+  ok <- is.finite(llmax)
+  sum_exp[ok] <- llmax[ok] + log(rowSums(exp(llik[ok,,drop=FALSE]-llmax[ok])))
   out <- sum(sum_exp)
-  out <- sum(log(rowSums(exp(llik))))
   return(out)
 }
 
