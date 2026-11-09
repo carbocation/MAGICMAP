@@ -489,12 +489,12 @@ magicmap <- function(data, betaTargetX, sdTargetX, betaComparatorY, sdComparator
   # POST-HOC STANDARD ERROR CALCULATION (Lowest BIC Model Only)
   # =================================================================
     # 1. Identify the "winning" model based on lowest BIC
-    best_i <- which.min(fits$BIC)
+    best_i <- which.min(fits$BIC)  # integer(0) if no model has a finite BIC
     best_k <- fits$k_components[best_i]
-    print(paste0("Calculating SE for the model with ", best_k, " components"))
-    
-    # Only calculate if the winning model actually converged
-    if (!is.na(fits$converged[best_i]) && fits$converged[best_i] && best_k > 0) {
+
+    # Only calculate if the winning model exists and actually converged
+    if (length(best_i) == 1 && isTRUE(fits$converged[best_i]) && best_k > 0) {
+      print(paste0("Calculating SE for the model with ", best_k, " components"))
       
       # 2. Extract the converged parameters for this specific model
       b_best <- slopes[[best_i]]$b

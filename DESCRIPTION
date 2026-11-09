@@ -19,7 +19,8 @@ Imports:
     goftest,
     magrittr,
     dplyr,
-    rlang
+    rlang,
+    numDeriv
 Remotes:
     github::aelliott08/SCOUTJOY,
     github::rkwalters/yorktools
