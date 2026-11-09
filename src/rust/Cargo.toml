@@ -1,0 +1,14 @@
+[package]
+name = "magicmap-rust"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "magicmap_rust"
+crate-type = ["staticlib"]
+
+[profile.release]
+opt-level = 3
+codegen-units = 1
+lto = "thin"

@@ -8,6 +8,8 @@
 # * estimator: which slope estimator to use, one of MLE, alt_MLE, or numeric
 # * nStarts: number of evenly spread starting points to fit from, in addition to the clustering start and the starts built from prev; 0 fits from the clustering start only
 # * prev: NULL, or list(b, p) with the slopes and proportions of the fitted model with k-1 components, used to build starting points
+# * engine: "R" or "rust"; which implementation runs the EM fit from each starting point
+# * threads: number of threads over which the rust engine spreads the starting points
 # * tx: NULL, or vector of truncation points for selection on the target trait (variant j was included because |x_j| >= tx_j)
 # * maxIterations: maximum number of iterations for fitting; applies to both EM and M-step regression iterations
 # * EMTolerance: convergence criteria for EM algorithm, in terms of relative change in loglik
@@ -18,7 +20,7 @@
 # structured list of class 'magicmap_single', without scoutjoy_test
 
 
-magicmap_1k <- function(data, re, k, estimator="MLE", maxIterations=1000, EMTolerance=1e-12, InnerTolerance=1e-12, verbose=FALSE, tx=NULL, nStarts=0, prev=NULL){
+magicmap_1k <- function(data, re, k, estimator="MLE", maxIterations=1000, EMTolerance=1e-12, InnerTolerance=1e-12, verbose=FALSE, tx=NULL, nStarts=0, prev=NULL, engine="R", threads=1){
   
   # sanity checks
   if(class(data)[1] != "data.frame"){
@@ -27,6 +29,13 @@ magicmap_1k <- function(data, re, k, estimator="MLE", maxIterations=1000, EMTole
   
   if(!(estimator %in% c("MLE","alt_MLE","numeric"))){
     stop("estimator must be one of \'MLE\', \'alt_MLE\', or \'numeric\'.")
+  }
+  
+  if(!(engine %in% c("R","rust"))){
+    stop("engine must be one of \'R\' or \'rust\'.")
+  }
+  if(engine == "rust" && estimator != "MLE"){
+    stop("engine \'rust\' is only available with estimator \'MLE\'.")
   }
   
   n_starts <- 1
@@ -196,9 +205,19 @@ magicmap_1k <- function(data, re, k, estimator="MLE", maxIterations=1000, EMTole
     # usually several. The list of starts is fixed and ordered (no random
     # numbers; see magicmap_extra_starts), and ties go to the earlier start,
     # so the result is the same on every run. The clustering start is first.
-    start_fits <- list(run_start(b_init, p_init))
+    starts <- list(list(b = b_init, p = p_init))
     if(k > 1 && nStarts > 0){
-      for(st in magicmap_extra_starts(dat, k, prev, nStarts)){
+      starts <- c(starts, magicmap_extra_starts(dat, k, prev, nStarts))
+    }
+    if(engine == "rust"){
+      # same algorithm, compiled (src/rust/src/lib.rs); all starts in one call
+      start_fits <- magicmap_em_starts_rust(dat, k, starts, EMTolerance, InnerTolerance, maxIterations, threads)
+      if(is.null(start_fits[[1]])){
+        stop("Error in function evaluation")
+      }
+    }else{
+      start_fits <- list(run_start(starts[[1]]$b, starts[[1]]$p))
+      for(st in starts[-1]){
         start_fits[[length(start_fits)+1]] <- tryCatch(run_start(st$b, st$p), error = function(e) NULL)
       }
     }
@@ -411,6 +430,12 @@ magicmap_1k <- function(data, re, k, estimator="MLE", maxIterations=1000, EMTole
 #' @param nStarts
 #' (Optional) Number of additional starting points to fit each model from. The fitting algorithm (EM) only climbs to the nearest maximum of the likelihood, and mixture likelihoods usually have several, so a single start can return a poor solution. Default 0, which fits each model from a single start (a clustering of the per-variant effect ratios). When greater than 0, each model with more than one component is fit from (1) a clustering of the per-variant effect ratios, (2) when the model with one fewer component was also fit, that solution with each line split in two and with a new line through the variant furthest from all of its lines, and (3) \code{nStarts} sets of slopes spread evenly over the range of the per-variant ratios. The fit with the highest log-likelihood is kept. No random numbers are used, so results are identical on every run. How many starts are needed depends on the data: the \code{n_starts_best} column of \code{fit_stats} gives how many starts reached the best log-likelihood, and results should be checked for stability at a larger value. Because the starts in (2) depend on the fit with one fewer component, a larger \code{nStarts} usually, but not always, gives an equal or higher log-likelihood.
 #' 
+#' @param engine
+#' Which implementation runs the EM fit: "R" (default) or "rust". The rust engine is a compiled, like-for-like port of the R code (same updates, tolerances and acceleration scheme), so it reaches the same solutions, with estimates agreeing to many digits but not necessarily to the last one. It is much faster, which matters mainly when \code{nStarts} is large. Only available with \code{estimator="MLE"}. Models with one component and no \code{TargetXPThreshold} are always fit by the R code.
+#' 
+#' @param threads
+#' Number of threads the rust engine spreads the starting points over. Default 1. Each starting point is fit independently, so results do not depend on this value. Ignored by the R engine.
+#' 
 #' @param estimator
 #' Which estimator to use for the regression slopes. One of "MLE", "alt_MLE", or "numeric".
 #' 
@@ -486,10 +511,11 @@ magicmap_1k <- function(data, re, k, estimator="MLE", maxIterations=1000, EMTole
 #'   \item Bulik-Sullivan, B. \emph{et al}. An atlas of genetic correlations across human diseases and traits. \emph{Nat. Genet.} 47(11): 1236-1241 (2015). PMCID: PMC4797329.
 #' }
 #'
+#' @useDynLib MAGICMAP, .registration = TRUE, .fixes = "."
 #' @export 
 #'
 
-magicmap <- function(data, betaTargetX, sdTargetX, betaComparatorY, sdComparatorY, k, ids = NULL, CovIntercept = 0, TargetXIntercept=1, ComparatorYIntercept=1, forceAllK=FALSE, inflateSEs=FALSE, TargetXPThreshold=NULL, nStarts=0, estimator="MLE", maxIterations=1000, EMTolerance=1e-12, InnerTolerance=1e-12, verbose=FALSE){
+magicmap <- function(data, betaTargetX, sdTargetX, betaComparatorY, sdComparatorY, k, ids = NULL, CovIntercept = 0, TargetXIntercept=1, ComparatorYIntercept=1, forceAllK=FALSE, inflateSEs=FALSE, TargetXPThreshold=NULL, nStarts=0, engine="R", threads=1, estimator="MLE", maxIterations=1000, EMTolerance=1e-12, InnerTolerance=1e-12, verbose=FALSE){
 
   # sanity checks
   if((length(betaTargetX)!=1) || (length(sdTargetX)!=1) || (length(betaComparatorY)!=1) || (length(sdComparatorY)!=1)){
@@ -511,6 +537,16 @@ magicmap <- function(data, betaTargetX, sdTargetX, betaComparatorY, sdComparator
     if(estimator == "alt_MLE"){
       stop("estimator \'alt_MLE\' is not available with TargetXPThreshold; use \'MLE\' or \'numeric\'.")
     }
+  }
+  
+  if(length(engine)!=1 || !(engine %in% c("R","rust"))){
+    stop("engine must be one of \'R\' or \'rust\'.")
+  }
+  if(engine == "rust" && estimator != "MLE"){
+    stop("engine \'rust\' is only available with estimator \'MLE\'.")
+  }
+  if(!is.numeric(threads) || length(threads)!=1 || is.na(threads) || threads < 1 || threads != round(threads)){
+    stop("threads must be a single whole number, 1 or larger.")
   }
   
   if(!is.numeric(nStarts) || length(nStarts)!=1 || is.na(nStarts) || nStarts < 0 || nStarts != round(nStarts)){
@@ -586,7 +622,9 @@ magicmap <- function(data, betaTargetX, sdTargetX, betaComparatorY, sdComparator
                        verbose=verbose,
                        tx=tx,
                        nStarts=nStarts,
-                       prev=prev)
+                       prev=prev,
+                       engine=engine,
+                       threads=threads)
     
     fits <- rbind(fits, mod$fit_stats)
     priors[[i]] <- mod$component_proportions

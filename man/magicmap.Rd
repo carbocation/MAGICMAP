@@ -19,6 +19,8 @@ magicmap(
   inflateSEs = FALSE,
   TargetXPThreshold = NULL,
   nStarts = 0,
+  engine = "R",
+  threads = 1,
   estimator = "MLE",
   maxIterations = 1000,
   EMTolerance = 1e-12,
@@ -54,6 +56,10 @@ magicmap(
 \item{TargetXPThreshold}{(Optional) P-value threshold that every variant had to pass for the target (x axis) trait in order to be included, e.g. \code{5e-8} for genome-wide significant lead variants. When given, each variant's likelihood is conditioned on having passed that threshold (a truncated bivariate normal), which corrects the overestimation of target effects that are close to the threshold ("winner's curse") and the resulting bias of slopes towards zero. Requires that variants were selected on the target trait alone, using the betas and standard errors supplied in \code{data}; it is an error if any variant does not pass the threshold. Default NULL, which assumes variants were not selected on their target trait association. Not available with \code{estimator="alt_MLE"}. The SCOUTJOY test is not adjusted for selection.}
 
 \item{nStarts}{(Optional) Number of additional starting points to fit each model from. The fitting algorithm (EM) only climbs to the nearest maximum of the likelihood, and mixture likelihoods usually have several, so a single start can return a poor solution. Default 0, which fits each model from a single start (a clustering of the per-variant effect ratios). When greater than 0, each model with more than one component is fit from (1) a clustering of the per-variant effect ratios, (2) when the model with one fewer component was also fit, that solution with each line split in two and with a new line through the variant furthest from all of its lines, and (3) \code{nStarts} sets of slopes spread evenly over the range of the per-variant ratios. The fit with the highest log-likelihood is kept. No random numbers are used, so results are identical on every run. How many starts are needed depends on the data: the \code{n_starts_best} column of \code{fit_stats} gives how many starts reached the best log-likelihood, and results should be checked for stability at a larger value. Because the starts in (2) depend on the fit with one fewer component, a larger \code{nStarts} usually, but not always, gives an equal or higher log-likelihood.}
+
+\item{engine}{Which implementation runs the EM fit: "R" (default) or "rust". The rust engine is a compiled, like-for-like port of the R code (same updates, tolerances and acceleration scheme), so it reaches the same solutions, with estimates agreeing to many digits but not necessarily to the last one. It is much faster, which matters mainly when \code{nStarts} is large. Only available with \code{estimator="MLE"}. Models with one component and no \code{TargetXPThreshold} are always fit by the R code.}
+
+\item{threads}{Number of threads the rust engine spreads the starting points over. Default 1. Each starting point is fit independently, so results do not depend on this value. Ignored by the R engine.}
 
 \item{estimator}{Which estimator to use for the regression slopes. One of "MLE", "alt_MLE", or "numeric".}
 

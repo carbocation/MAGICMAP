@@ -290,3 +290,35 @@ magicmap_extra_starts <- function(data, k, prev=NULL, nStarts=0){
   
   return(out)
 }
+
+
+# ---------------------------------------------------------------------------
+# Rust engine: fit the mixture by EM from each starting point in one call to
+# the compiled port of the R fit (src/rust/src/lib.rs, estimator "MLE").
+#
+# data: data frame with x, sx, y, sy, re and optionally tx
+# starts: list of list(b, p)
+#
+# Returns a list with one element per start, in order: list(b, p, x, ll,
+# iter, converge), or NULL where the fit failed (where the R code would have
+# raised an error).
+# ---------------------------------------------------------------------------
+magicmap_em_starts_rust <- function(data, k, starts, EMTolerance, InnerTolerance, maxIterations, threads=1){
+  start_matrix <- matrix(NA_real_, length(starts), 2*k)
+  for(s in seq_along(starts)){
+    start_matrix[s,] <- c(starts[[s]]$b, starts[[s]]$p)
+  }
+  tx <- if(is.null(data$tx)) NULL else as.double(data$tx)
+  
+  out <- .Call(.magicmap_em_starts,
+               as.double(data$x), as.double(data$sx), as.double(data$y), as.double(data$sy),
+               tx, as.double(data$re[1]), as.integer(k), start_matrix,
+               as.double(EMTolerance), as.double(InnerTolerance),
+               as.integer(maxIterations), as.integer(threads))
+  
+  lapply(seq_along(starts), function(s){
+    if(out$status[s] != 0L) return(NULL)
+    list(b = out$b[s,], p = out$p[s,], x = out$x[s,],
+         ll = out$logLik[s], iter = out$iter[s], converge = out$converged[s])
+  })
+}

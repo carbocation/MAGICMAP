@@ -23,6 +23,19 @@ It depends on:
 * mvtnorm
 * Ckmeans.1d.dp
 
+### Rust engine branch
+
+The `dev-jp-rust` branch adds an optional compiled engine for the EM fit
+(`magicmap(..., engine = "rust")`). The default engine is still the R code, and
+the rust engine is a like-for-like port of it, so the two reach the same
+solutions. Building this branch from source requires a Rust toolchain with
+`cargo` and `rustc` on `PATH` or in `~/.cargo/bin` (see https://rustup.rs/).
+Rust is needed to build the package but not to run it.
+
+    devtools::install_github("carbocation/MAGICMAP", ref = "dev-jp-rust")
+
+`benchmarks/benchmark-rust-em.R` times the two engines against each other.
+
 ## Usage
 
 ### Inputs

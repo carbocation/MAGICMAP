@@ -25,7 +25,11 @@ Remotes:
     github::rkwalters/yorktools
 Suggests: 
     R.rsp,
-    RColorBrewer
+    RColorBrewer,
+    testthat (>= 3.0.0)
+Config/testthat/edition: 3
+SystemRequirements: Cargo (Rust compiler, edition 2021)
+NeedsCompilation: yes
 VignetteBuilder: R.rsp
 Encoding: UTF-8
 LazyData: true
