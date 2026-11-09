@@ -1,15 +1,22 @@
 
-estep_posteriors <- function(data, beta, priorp, xpred){
-  llik <- matrix(NA, nrow(data), length(beta))
+# Log density of each variant's observed effects under each component:
+# bivariate normal for (x, y) with mean (xpred, beta_k*xpred), SDs sx and sy,
+# and error correlation re. Written out in closed form so that it is evaluated
+# for all variants at once. Returns an n x k matrix.
+component_logdens <- function(data, beta, xpred){
+  c12 <- data$re*data$sx*data$sy
+  D <- data$sx^2*data$sy^2 - c12^2
+  r1 <- data$x - xpred
+  out <- matrix(NA, nrow(data), length(beta))
   for(k in 1:length(beta)){
-    llik[,k] <- sapply(1:nrow(data), function(a){
-      log(priorp[k]) + 
-        mvtnorm::dmvnorm(c(data$x[a],data$y[a]),
-                         mean=c(xpred[a], beta[k]*xpred[a]),
-                         sigma=matrix(c(data$sx[a]^2, data$re[a]*data$sx[a]*data$sy[a], 
-                                        data$re[a]*data$sx[a]*data$sy[a], data$sy[a]^2),2,2),
-                         log=T)})
+    r2 <- data$y - beta[k]*xpred
+    out[,k] <- -log(2*pi) - 0.5*log(D) - 0.5*(data$sy^2*r1^2 - 2*c12*r1*r2 + data$sx^2*r2^2)/D
   }
+  return(out)
+}
+
+estep_posteriors <- function(data, beta, priorp, xpred){
+  llik <- component_logdens(data, beta, xpred) + rep(log(priorp), each=nrow(data))
   center_ll <- llik-apply(llik,1,max)
   out <- exp(center_ll-log(rowSums(exp(center_ll))))
   # out <- signif(out, 12)
@@ -70,33 +77,13 @@ slope_est_func2 <- function(data, beta, postp){
 
 Q_loglik_matrix <- function(data, beta, priorp, xpred, postp){
   
-  llik <- matrix(NA, nrow(data), length(beta))
-  for(k in 1:length(beta)){
-    llik[,k] <- sapply(1:nrow(data), function(a){
-      postp[a,k] *
-        (log(priorp[k]) + 
-           mvtnorm::dmvnorm(c(data$x[a],data$y[a]),
-                            mean=c(xpred[a], beta[k]*xpred[a]),
-                            sigma=matrix(c(data$sx[a]^2, data$re[a]*data$sx[a]*data$sy[a], 
-                                           data$re[a]*data$sx[a]*data$sy[a], data$sy[a]^2),2,2),
-                            log=T))})
-    
-  }
+  llik <- postp*(component_logdens(data, beta, xpred) + rep(log(priorp), each=nrow(data)))
   return(llik)
 }
 
 
 ll_comp_func <- function(data, beta, priorp, xpred){
-  llik <- matrix(NA, nrow(data), length(beta))
-  for(k in 1:length(beta)){
-    llik[,k] <- sapply(1:nrow(data), function(a){
-      log(priorp[k]) + 
-        mvtnorm::dmvnorm(c(data$x[a],data$y[a]),
-                         mean=c(xpred[a], beta[k]*xpred[a]),
-                         sigma=matrix(c(data$sx[a]^2, data$re[a]*data$sx[a]*data$sy[a], 
-                                        data$re[a]*data$sx[a]*data$sy[a], data$sy[a]^2),2,2),
-                         log=T)})
-  }
+  llik <- component_logdens(data, beta, xpred) + rep(log(priorp), each=nrow(data))
   # log-sum-exp across components, so SNPs far from every line don't underflow to -Inf
   llmax <- apply(llik,1,max)
   sum_exp <- llmax
@@ -119,18 +106,7 @@ mstep_optim_func <- function(params, data, priorp, postp){
   xpred <- params[(k+1):(n+k)]
   
   
-  llik <- matrix(NA, nrow(data), length(beta))
-  for(k in 1:length(beta)){
-    llik[,k] <- sapply(1:nrow(data), function(a){
-      postp[a,k] *
-        (log(priorp[k]) + 
-           mvtnorm::dmvnorm(c(data$x[a],data$y[a]),
-                            mean=c(xpred[a], beta[k]*xpred[a]),
-                            sigma=matrix(c(data$sx[a]^2, data$re[a]*data$sx[a]*data$sy[a], 
-                                           data$re[a]*data$sx[a]*data$sy[a], data$sy[a]^2),2,2),
-                            log=T))})
-    
-  }
+  llik <- postp*(component_logdens(data, beta, xpred) + rep(log(priorp), each=nrow(data)))
   return(sum(llik) - sum(selection_logprob(data, xpred)$logA))
 }
 

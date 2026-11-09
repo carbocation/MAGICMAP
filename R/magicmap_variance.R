@@ -125,6 +125,16 @@ magicmap_vcov <- function(data, beta, priorp, xpred){
   S_prof <- S[,1:na,drop=FALSE] - h_ax*(S[,npar]/h_xx)
   B <- crossprod(S_prof)
 
+  # Components that have collapsed onto the same slope make the information
+  # matrix singular. Checked on the unit-free (correlation-scaled) matrix with
+  # a fixed tolerance, so that whether SEs are returned for such a fit does
+  # not depend on rounding error.
+  info_diag <- diag(info)
+  if(any(!is.finite(info)) || any(info_diag <= 0) ||
+     rcond(info/sqrt(outer(info_diag, info_diag))) < 1e-10){
+    stop("information matrix is singular; components may not be distinct")
+  }
+
   vcov <- solve(info)
   vcov_robust <- vcov %*% B %*% vcov
 
