@@ -32,6 +32,9 @@
 #' @param class_thresh
 #' threshold of posterior probability to use for assigning variants to components
 #' 
+#' @param poor_fit_p
+#' Variants assigned to a component but whose distance from that component's line has a p-value below this threshold (\code{distance_p} in the \code{assignments} table, see \code{\link{magicmap}()}) are shown as unassigned. Default 0.001. Set to 0 or NULL to assign on posterior probability alone.
+#' 
 #' @param diagnostics
 #' Which homogeneity diagnostics to annotate. Can include "summary" (legend with categorical decisions) and/or "details" (metrics annotated on regression line).
 #' 
@@ -90,7 +93,7 @@
 #' @export
 #'
 
-plot.magicmap <- function(model, which_model=NULL, class_thresh=0.95, diagnostics=c("summary"), outer_title=NULL, label_comp=NULL, colors=NULL, se_bars=TRUE, se_color="gray70", legend=TRUE, comp_names=NULL, se_length=0.025, conf_region=TRUE, assigned_cex=1, unassigned_cex=1, label_cex=0.8, CovIntercept=NULL, TargetXIntercept=NULL, ComparatorYIntercept=NULL, hide_warnings=FALSE, ...){  
+plot.magicmap <- function(model, which_model=NULL, class_thresh=0.95, poor_fit_p=0.001, diagnostics=c("summary"), outer_title=NULL, label_comp=NULL, colors=NULL, se_bars=TRUE, se_color="gray70", legend=TRUE, comp_names=NULL, se_length=0.025, conf_region=TRUE, assigned_cex=1, unassigned_cex=1, label_cex=0.8, CovIntercept=NULL, TargetXIntercept=NULL, ComparatorYIntercept=NULL, hide_warnings=FALSE, ...){  
   args <- list(...)
   
   selected_model <- extract_magicmap_model(model, which_model=which_model, hide_warnings=hide_warnings)
@@ -132,7 +135,23 @@ plot.magicmap <- function(model, which_model=NULL, class_thresh=0.95, diagnostic
     classes[maxprob < class_thresh] <- unassigned_idx
   }
   
-  unassigned_label <- sprintf("Unassigned (N=%d)", sum(classes == unassigned_idx))
+  # variants that are far from the line of the component they were assigned to
+  # are shown as unassigned: a high posterior only says that the other lines fit worse
+  n_poor <- 0
+  if(!is.null(poor_fit_p) && poor_fit_p > 0){
+    # the profiler below repeats any warning about missing LDSC intercepts
+    re_fit <- suppressWarnings(.get_residcor_from_call(selected_model, CovIntercept, TargetXIntercept, ComparatorYIntercept))
+    fit_p <- .magicmap_assignments(selected_model$posteriors, slopes, re_fit)$distance_p
+    poor <- classes <= k & fit_p < poor_fit_p
+    n_poor <- sum(poor)
+    classes[poor] <- unassigned_idx
+  }
+  
+  if(n_poor > 0){
+    unassigned_label <- sprintf("Unassigned (N=%d, %d poor fit)", sum(classes == unassigned_idx), n_poor)
+  }else{
+    unassigned_label <- sprintf("Unassigned (N=%d)", sum(classes == unassigned_idx))
+  }
   if(has_noise){
     noise_label <- sprintf("Unstructured (N=%d)", sum(classes == noise_idx))
   }else{
@@ -522,6 +541,9 @@ plot.magicmap_single <- plot.magicmap
 #' @param class_thresh
 #' threshold of posterior probability to use for assigning variants to components
 #' 
+#' @param poor_fit_p
+#' Variants assigned to a component but whose distance from that component's line has a p-value below this threshold (\code{distance_p} in the \code{assignments} table, see \code{\link{magicmap}()}) are shown as unassigned. Default 0.001. Set to 0 or NULL to assign on posterior probability alone.
+#' 
 #' @param forest_drop_unassigned
 #' omit unassigned points from forest plot (if applicable)
 #' 
@@ -553,7 +575,7 @@ plot.magicmap_single <- plot.magicmap
 #' @export
 #'
 
-plot_ratio_figure <- function(model, target_name=NULL, comparator_name=NULL, panels="all", output_forest_data="none", which_model=NULL, CovIntercept=NULL, TargetXIntercept=NULL, ComparatorYIntercept=NULL, class_thresh=0.95, forest_drop_unassigned=FALSE, conf_region=TRUE, colors=NULL, cex_forest_labels=0.5, layout_widths=NULL, layout_heights=NULL, n_mc=20000, seed=NULL, ...){  
+plot_ratio_figure <- function(model, target_name=NULL, comparator_name=NULL, panels="all", output_forest_data="none", which_model=NULL, CovIntercept=NULL, TargetXIntercept=NULL, ComparatorYIntercept=NULL, class_thresh=0.95, poor_fit_p=0.001, forest_drop_unassigned=FALSE, conf_region=TRUE, colors=NULL, cex_forest_labels=0.5, layout_widths=NULL, layout_heights=NULL, n_mc=20000, seed=NULL, ...){  
   
   args <- list(...)
   
@@ -651,6 +673,12 @@ plot_ratio_figure <- function(model, target_name=NULL, comparator_name=NULL, pan
     prob=NA
   )
   
+  # variants far from their assigned component's line are treated as unassigned, as in plot.magicmap
+  poor <- rep(FALSE, nrow(tab))
+  if(!is.null(poor_fit_p) && poor_fit_p > 0){
+    poor <- .magicmap_assignments(tab, selected_model$slopes[,"b"], rr)$distance_p < poor_fit_p
+  }
+  
   for(i in 1:nrow(tab)){
     cat <- which(tab[i,5:ncol(tab)] > class_thresh)
     if(length(cat)==0){
@@ -659,6 +687,9 @@ plot_ratio_figure <- function(model, target_name=NULL, comparator_name=NULL, pan
     }else{
       cat <- which.max(tab[i,5:ncol(tab)])
       forest$prob[i] <- tab[i,c(5:ncol(tab))[cat]]
+      if(poor[i]){
+        cat <- k+1
+      }
     }
     forest$cat[i] <- cat
     
@@ -817,6 +848,7 @@ plot_ratio_figure <- function(model, target_name=NULL, comparator_name=NULL, pan
       selected_model,
       which_model = NULL,
       class_thresh = class_thresh,
+      poor_fit_p = poor_fit_p,
       diagnostics = NULL,
       colors = cols,
       legend = FALSE,

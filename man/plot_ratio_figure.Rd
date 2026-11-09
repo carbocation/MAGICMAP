@@ -15,6 +15,7 @@ plot_ratio_figure(
   TargetXIntercept = NULL,
   ComparatorYIntercept = NULL,
   class_thresh = 0.95,
+  poor_fit_p = 0.001,
   forest_drop_unassigned = FALSE,
   conf_region = TRUE,
   colors = NULL,
@@ -46,6 +47,8 @@ plot_ratio_figure(
 \item{ComparatorYIntercept}{For old MAGICMAP objects without saved call information, the intercept from LDSC heritability analysis of the comparator (y axis) trait used to fit MAGICMAP.}
 
 \item{class_thresh}{threshold of posterior probability to use for assigning variants to components}
+
+\item{poor_fit_p}{Variants assigned to a component but whose distance from that component's line has a p-value below this threshold (\code{distance_p} in the \code{assignments} table, see \code{\link{magicmap}()}) are shown as unassigned. Default 0.001. Set to 0 or NULL to assign on posterior probability alone.}
 
 \item{forest_drop_unassigned}{omit unassigned points from forest plot (if applicable)}
 

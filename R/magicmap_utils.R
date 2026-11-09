@@ -50,6 +50,30 @@
 
 
 
+# Squared distance from each variant's observed effects to each component's
+# line, in standard error units: (y - b*x)^2 / var(y - b*x). This is the
+# smallest Mahalanobis distance from the point to any position on the line,
+# and is chi-square with 1 df for a variant that lies on the line.
+# Returns an n x k matrix.
+.magicmap_line_distance <- function(x, sx, y, sy, re, slopes){
+  d2 <- sapply(slopes, function(b) (y - b*x)^2/(sy^2 + b^2*sx^2 - 2*b*re*sx*sy))
+  matrix(d2, nrow=length(x), ncol=length(slopes))
+}
+
+# Per-variant table of the highest-posterior component and the fit to its line.
+# posteriors: data frame with x, sx, y, sy in columns 1-4 and ProbClass columns
+.magicmap_assignments <- function(posteriors, slopes, re){
+  pp <- as.matrix(posteriors[, grep("^ProbClass", colnames(posteriors)), drop=FALSE])
+  idx <- cbind(seq_len(nrow(pp)), apply(pp, 1, which.max))
+  d2 <- .magicmap_line_distance(posteriors[,1], posteriors[,2], posteriors[,3], posteriors[,4], re, slopes)[idx]
+  data.frame(component = idx[,2],
+             posterior = pp[idx],
+             distance2 = d2,
+             distance_p = stats::pchisq(d2, df=1, lower.tail=FALSE),
+             row.names = rownames(posteriors))
+}
+
+
 #' Extract single model from MAGICMAP results object
 #' 
 #' @description
@@ -101,6 +125,10 @@
 #'   
 #'   \item{\code{posteriors}}{
 #'     Data frame containing the original input data (i.e. the X effect size, X standard error, Y effect size, and Y standard error) and the estimated posterior probability of the observations being a member of each of the \code{k} mixture components.
+#'   }
+#'
+#'   \item{\code{assignments}}{
+#'     (optional) Data frame with one row per variant giving the mixture component with the highest posterior probability (\code{component}), that probability (\code{posterior}), and how well the variant fits that component's line: \code{distance2} is the squared distance from the observed effects to the line in standard error units, and \code{distance_p} its p-value (chi-square, 1 df). Posterior probabilities only compare the components with each other, so a variant that is far from every line can still have a posterior near 1; a small \code{distance_p} identifies such variants. Distances use the observed effects and are not adjusted for \code{TargetXPThreshold}.
 #'   }
 #'
 #'   \item{\code{call}}{
@@ -226,6 +254,10 @@ extract_magicmap_model <- function(model, which_model=NULL, hide_warnings=FALSE)
       # shouldn't happen, unclear what format could end up here
       stop("model has an unexpected format; very input or retry fitting MAGICMAP?")
     }
+  }
+  
+  if("assignments" %in% names(model)){
+    out$assignments <- model$assignments[[paste0("mix",k,"components")]]
   }
   
   class(out) <- "magicmap_single"

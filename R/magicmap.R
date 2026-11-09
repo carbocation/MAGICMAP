@@ -221,6 +221,9 @@ magicmap_1k <- function(data, re, k, estimator="MLE", maxIterations=1000, EMTole
   rownames(post_est) <- rownames(data)
   posteriors <- cbind(data,post_est)
   
+  # assigned component and fit to its line for each variant
+  assignments <- .magicmap_assignments(posteriors, b_est, re)
+  
   # standard errors from the observed information of the mixture likelihood
   # (see magicmap_variance.R); se is the sandwich (robust) SE, se_model the
   # model-based SE
@@ -275,7 +278,8 @@ magicmap_1k <- function(data, re, k, estimator="MLE", maxIterations=1000, EMTole
     component_proportions = p_est,
     slopes = parameters,
     predicted_target_betas = x_est,
-    posteriors = posteriors
+    posteriors = posteriors,
+    assignments = assignments
   )
   
   if(!is.na(em_converge) && !em_converge){
@@ -304,7 +308,8 @@ magicmap_1k <- function(data, re, k, estimator="MLE", maxIterations=1000, EMTole
       component_proportions = NA,
       slopes = NA,
       predicted_target_betas = NA,
-      posteriors = NA
+      posteriors = NA,
+      assignments = NA
     )
   }
   
@@ -416,13 +421,17 @@ magicmap_1k <- function(data, re, k, estimator="MLE", maxIterations=1000, EMTole
 #'     Data frame containing the original input data (i.e. the X effect size, X standard error, Y effect size, and Y standard error) and the estimated posterior probability of the observations being a member of each of the \code{k} mixture components.
 #'   }
 #'
+#'   \item{\code{assignments}}{
+#'     Data frame with one row per variant giving the mixture component with the highest posterior probability (\code{component}), that probability (\code{posterior}), and how well the variant fits that component's line: \code{distance2} is the squared distance from the observed effects to the line in standard error units, and \code{distance_p} its p-value (chi-square, 1 df). Posterior probabilities only compare the components with each other, so a variant that is far from every line can still have a posterior near 1; a small \code{distance_p} identifies such variants. Distances use the observed effects and are not adjusted for \code{TargetXPThreshold}.
+#'   }
+#'
 #'   \item{\code{call}}{
 #'     \code{\link[base]{call}} object containing all arguments used 
 #'   }
 #'   
 #' }
 #' 
-#' The \code{component_proportions}, \code{slopes}, \code{predicted_target_betas}, and \code{posteriors} are each structured as a list with entries named for the number of fitted components (e.g. \code{mix2components}, \code{mix3components}, etc). Within each model, mixture components are ordered from highest to lowest slope.
+#' The \code{component_proportions}, \code{slopes}, \code{predicted_target_betas}, \code{posteriors}, and \code{assignments} are each structured as a list with entries named for the number of fitted components (e.g. \code{mix2components}, \code{mix3components}, etc). Within each model, mixture components are ordered from highest to lowest slope.
 #' 
 #' 
 #' @references
@@ -503,6 +512,7 @@ magicmap <- function(data, betaTargetX, sdTargetX, betaComparatorY, sdComparator
   priors <- list()
   xpreds <- list()
   posts <- list()
+  assigns <- list()
   stop_k_too_high <- F
   
   for(i in seq_along(k)){
@@ -525,6 +535,7 @@ magicmap <- function(data, betaTargetX, sdTargetX, betaComparatorY, sdComparator
     slopes[[i]] <- mod$slopes
     xpreds[[i]] <- mod$predicted_target_betas
     posts[[i]] <- mod$posteriors
+    assigns[[i]] <- mod$assignments
     
     if(any(grepl("Slopes not well differentiated",mod$fit_stats$notes))){
       if(forceAllK){
@@ -546,6 +557,7 @@ magicmap <- function(data, betaTargetX, sdTargetX, betaComparatorY, sdComparator
   names(slopes) <- paste0("mix",k,"components")
   names(xpreds) <- paste0("mix",k,"components")
   names(posts) <- paste0("mix",k,"components")
+  names(assigns) <- paste0("mix",k,"components")
 
   # record call
   call_obj <- rlang::call_match(defaults=TRUE)
@@ -565,6 +577,7 @@ magicmap <- function(data, betaTargetX, sdTargetX, betaComparatorY, sdComparator
     slopes = slopes,
     predicted_target_betas = xpreds,
     posteriors = posts,
+    assignments = assigns,
     call = clean_call
   )
   

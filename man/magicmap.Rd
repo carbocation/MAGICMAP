@@ -100,13 +100,17 @@ A list of class 'magicmap' containing:
     Data frame containing the original input data (i.e. the X effect size, X standard error, Y effect size, and Y standard error) and the estimated posterior probability of the observations being a member of each of the \code{k} mixture components.
   }
 
+  \item{\code{assignments}}{
+    Data frame with one row per variant giving the mixture component with the highest posterior probability (\code{component}), that probability (\code{posterior}), and how well the variant fits that component's line: \code{distance2} is the squared distance from the observed effects to the line in standard error units, and \code{distance_p} its p-value (chi-square, 1 df). Posterior probabilities only compare the components with each other, so a variant that is far from every line can still have a posterior near 1; a small \code{distance_p} identifies such variants. Distances use the observed effects and are not adjusted for \code{TargetXPThreshold}.
+  }
+
   \item{\code{call}}{
     \code{\link[base]{call}} object containing all arguments used 
   }
   
 }
 
-The \code{component_proportions}, \code{slopes}, \code{predicted_target_betas}, and \code{posteriors} are each structured as a list with entries named for the number of fitted components (e.g. \code{mix2components}, \code{mix3components}, etc). Within each model, mixture components are ordered from highest to lowest slope.
+The \code{component_proportions}, \code{slopes}, \code{predicted_target_betas}, \code{posteriors}, and \code{assignments} are each structured as a list with entries named for the number of fitted components (e.g. \code{mix2components}, \code{mix3components}, etc). Within each model, mixture components are ordered from highest to lowest slope.
 }
 \description{
 Fits MAGICMAP (Mixtures Aggregating Genes Into Coordinated Modules And Pathways), a regression mixture model where each component is a york regression with the intercept fixed to zero.
