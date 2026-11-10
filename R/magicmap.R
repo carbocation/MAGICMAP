@@ -412,10 +412,10 @@ magicmap_1k <- function(data, re, k, estimator="MLE", maxIterations=1000, EMTole
 #' (Optional) Number of additional starting points to fit each model from. Default 0, which fits each model from a single start (a clustering of the per-variant effect ratios). The fitting algorithm (EM) climbs to a nearby maximum of the likelihood, and mixture likelihoods usually have several, so the solution can depend on the start. When greater than 0, each model with more than one component is fit from (1) a clustering of the per-variant effect ratios, (2) when the model with one fewer component was also fit, that solution with each line split in two and with a new line through the variant furthest from all of its lines, and (3) \code{nStarts} sets of slopes spread evenly over the range of the per-variant ratios. The fit with the highest log-likelihood is kept, and the \code{n_starts_best} column of \code{fit_stats} gives how many starts reached it. No random numbers are used, so results are identical on every run. The main use is to check how much the reported solution depends on the start: a solution reached by only a few of the starts is fragile and should be interpreted with caution. A larger \code{nStarts} should not be assumed to give a better answer. A higher log-likelihood is not necessarily a more accurate grouping of the variants, in particular when the gain comes from a line fitted to very few variants. And because the starts in (2) depend on the fit with one fewer component, a larger \code{nStarts} does not always give an equal or higher log-likelihood.
 #' 
 #' @param engine
-#' Which implementation runs the EM fit: "R" (default) or "rust". The rust engine is a compiled, like-for-like port of the R code (same updates, tolerances and acceleration scheme), so it reaches the same solutions, with estimates agreeing to many digits but not necessarily to the last one. It is much faster, which matters mainly when \code{nStarts} is large. Only available with \code{estimator="MLE"}. Models with one component are always fit by the R code (a York regression).
+#' Which implementation runs the EM fit: "R" (default) or "rust". The rust engine is a compiled, like-for-like port of the R code (same updates, tolerances and acceleration scheme), so it reaches the same solutions, with estimates agreeing to many digits but not necessarily to the last one. It is much faster, which matters mainly when \code{nStarts} is large. Only available with \code{estimator="MLE"}. Models with one component are always fit by the R code (a York regression). When the installed SCOUTJOY package also has a rust engine (an \code{engine} argument to \code{scoutjoy}), "rust" is passed on to its outlier test as well; otherwise SCOUTJOY runs as usual.
 #' 
 #' @param threads
-#' Number of threads the rust engine spreads the starting points over. Default 1. Each starting point is fit independently, so results do not depend on this value. Ignored by the R engine.
+#' Number of threads the rust engine spreads the starting points over. Default 1. Each starting point is fit independently, so results do not depend on this value. Also passed to SCOUTJOY's rust engine when that is used. Ignored by the R engine.
 #' 
 #' @param estimator
 #' Which estimator to use for the regression slopes. One of "MLE", "alt_MLE", or "numeric".
@@ -548,7 +548,14 @@ magicmap <- function(data, betaTargetX, sdTargetX, betaComparatorY, sdComparator
     data[,sdComparatorY] <- data[,sdComparatorY]*sqrt(ComparatorYIntercept)
   }
   
-  scout <- SCOUTJOY::scoutjoy(betaComparatorY, betaTargetX, sdComparatorY, sdTargetX, data, CovIntercept = CovIntercept, ExposureIntercept = TargetXIntercept, OutcomeIntercept=ComparatorYIntercept, printProgress = FALSE)
+  scout_args <- list(betaComparatorY, betaTargetX, sdComparatorY, sdTargetX, data, CovIntercept = CovIntercept, ExposureIntercept = TargetXIntercept, OutcomeIntercept=ComparatorYIntercept, printProgress = FALSE)
+  # pass the engine on only to a SCOUTJOY build that has one; otherwise
+  # SCOUTJOY runs as it always has
+  if(engine == "rust" && all(c("engine","threads") %in% names(formals(SCOUTJOY::scoutjoy)))){
+    scout_args$engine <- "rust"
+    scout_args$threads <- threads
+  }
+  scout <- do.call(SCOUTJOY::scoutjoy, scout_args)
   
 
   fits <- NULL
