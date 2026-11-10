@@ -317,40 +317,16 @@ plot.magicmap <- function(model, which_model=NULL, class_thresh=0.95, poor_fit_p
     for(i in 1:k){
       if(!is.na(slopese[i])) {
         
-        if(min(x-sx)<0){
-          polygon(x=c(
-            0,
-            min(x-sx), 
-            min(x-sx),
-            0,
-            max(x+sx), 
-            max(x+sx)
-          ),
-          y=c(
-            0,
-            min(x-sx)*(slopes[i]-qnorm(.025,lower=F)*slopese[i]), 
-            min(x-sx)*(slopes[i]+qnorm(.025,lower=F)*slopese[i]), 
-            0,
-            max(x+sx)*(slopes[i]+qnorm(.025,lower=F)*slopese[i]), 
-            max(x+sx)*(slopes[i]-qnorm(.025,lower=F)*slopese[i])
-          ),
-          border=FALSE,
-          col=adjustcolor(colors[i], alpha.f=0.3))
-        }else{
-          polygon(x=c(
-            min(x-sx), 
-            min(x-sx),
-            max(x+sx), 
-            max(x+sx)
-          ),
-          y=c(
-            min(x-sx)*(slopes[i]-qnorm(.025,lower=F)*slopese[i]), 
-            min(x-sx)*(slopes[i]+qnorm(.025,lower=F)*slopese[i]), 
-            max(x+sx)*(slopes[i]+qnorm(.025,lower=F)*slopese[i]), 
-            max(x+sx)*(slopes[i]-qnorm(.025,lower=F)*slopese[i])
-          ),
-          border=FALSE,
-          col=adjustcolor(colors[i], alpha.f=0.3))
+        # the confidence region of a slope is a wedge from the origin; draw it
+        # to the edges of the plot, as the lines are
+        zse <- qnorm(.025,lower=F)*slopese[i]
+        for(xedge in par("usr")[1:2]){
+          if(xedge != 0){
+            polygon(x=c(0, xedge, xedge),
+                    y=c(0, xedge*(slopes[i]-zse), xedge*(slopes[i]+zse)),
+                    border=FALSE,
+                    col=adjustcolor(colors[i], alpha.f=0.3))
+          }
         }
         
       }
