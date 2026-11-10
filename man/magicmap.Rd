@@ -56,7 +56,7 @@ magicmap(
 
 \item{engine}{Which implementation runs the EM fit: "R" (default) or "rust". The rust engine is a compiled, like-for-like port of the R code (same updates, tolerances and acceleration scheme), so it reaches the same solutions, with estimates agreeing to many digits but not necessarily to the last one. It is much faster, which matters mainly when \code{nStarts} is large. Only available with \code{estimator="MLE"}. Models with one component are always fit by the R code (a York regression). When the installed SCOUTJOY package also has a rust engine (an \code{engine} argument to \code{scoutjoy}), "rust" is passed on to its outlier test as well; otherwise SCOUTJOY runs as usual.}
 
-\item{threads}{Number of threads the rust engine spreads the starting points over. Default 1. Each starting point is fit independently, so results do not depend on this value. Also passed to SCOUTJOY's rust engine when that is used. Ignored by the R engine.}
+\item{threads}{Number of threads for the rust engine. Default 1. Starting points are spread over the threads; any threads beyond one per starting point share the passes over the variants within a starting point. Results do not depend on this value. Also passed to SCOUTJOY's rust engine when that is used. Ignored by the R engine.}
 
 \item{estimator}{Which estimator to use for the regression slopes. One of "MLE", "alt_MLE", or "numeric".}
 

@@ -61,6 +61,16 @@ test_that("rust engine results do not depend on the number of threads", {
   expect_identical(one, four)
 })
 
+test_that("rust engine results do not depend on the number of threads within a start", {
+  # more variants than one block of the rust engine (8192), a single start
+  inputs <- make_em_inputs(n = 20000L, seed = 17L)
+  one <- fit_em(inputs, 2, "rust", threads = 1)
+  four <- fit_em(inputs, 2, "rust", threads = 4)
+  expect_identical(one, four)
+  # blocks change only the order of addition
+  expect_same_fit(one, fit_em(inputs, 2, "R"))
+})
+
 test_that("rust engine is refused for estimators it does not implement", {
   inputs <- make_em_inputs(seed = 15L)
   expect_error(fit_em(inputs, 2, "rust", estimator = "numeric"), "only available")

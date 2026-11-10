@@ -9,6 +9,13 @@
 //!
 //! Each starting point is fitted independently, so starts can be spread over
 //! threads without changing any result.
+//!
+//! Within one start, every pass over the variants is done in blocks of BLOCK
+//! variants: each block is summed on its own, in variant order, and the block
+//! sums are added in block order. Threads left over after one per start share
+//! the blocks. The blocks do not depend on the number of threads, so neither
+//! does any result. With BLOCK variants or fewer there is one block, and the
+//! arithmetic is in the same order as the R expressions.
 
 // Index loops and negated float comparisons are kept as they are: they mirror
 // the R expressions, including how those treat NaN.
@@ -20,6 +27,23 @@ use std::thread;
 
 const LN_2PI: f64 = 1.837_877_066_409_345_3;
 
+/// Variants per block (see the module comment).
+const BLOCK: usize = 8192;
+
+/// Pointer to an output array that worker threads fill at disjoint positions.
+struct SharedOut(*mut f64);
+// Safety: every use writes each position from exactly one block.
+unsafe impl Send for SharedOut {}
+unsafe impl Sync for SharedOut {}
+impl SharedOut {
+    /// # Safety
+    /// `index` must be in bounds and written by one thread only.
+    #[inline]
+    unsafe fn write(&self, index: usize, value: f64) {
+        *self.0.add(index) = value;
+    }
+}
+
 /// A step of the fit that R would have stopped on (an error or a NaN).
 struct FitFailed;
 
@@ -30,6 +54,8 @@ struct Problem<'a> {
     y: &'a [f64],
     inner_tol: f64,
     max_iter: usize,
+    /// threads that share the blocks of one start
+    threads: usize,
     // per-variant quantities that do not change during the fit
     sx2: Vec<f64>,
     sy2: Vec<f64>,
@@ -54,6 +80,7 @@ impl<'a> Problem<'a> {
         k: usize,
         inner_tol: f64,
         max_iter: usize,
+        threads: usize,
     ) -> Self {
         let n = x.len();
         let mut sx2 = Vec::with_capacity(n);
@@ -81,6 +108,7 @@ impl<'a> Problem<'a> {
             y,
             inner_tol,
             max_iter,
+            threads,
             sx2,
             sy2,
             c12,
@@ -100,11 +128,50 @@ impl<'a> Problem<'a> {
                 / self.det[i]
     }
 
+    /// Runs `f(from, to)` on every block of variants and returns the results
+    /// in block order, sharing the blocks among this start's threads.
+    fn blocks<R: Send>(&self, f: impl Fn(usize, usize) -> R + Sync) -> Vec<R> {
+        let n = self.n;
+        let n_blocks = n.div_ceil(BLOCK).max(1);
+        let run = |block: usize| f((block * BLOCK).min(n), ((block + 1) * BLOCK).min(n));
+        let workers = self.threads.min(n_blocks);
+        if workers <= 1 {
+            return (0..n_blocks).map(run).collect();
+        }
+        let per_worker = n_blocks.div_ceil(workers);
+        let run = &run;
+        thread::scope(|scope| {
+            let handles: Vec<_> = (0..workers)
+                .map(|w| {
+                    scope.spawn(move || {
+                        let from = (w * per_worker).min(n_blocks);
+                        let to = ((w + 1) * per_worker).min(n_blocks);
+                        (from..to).map(run).collect::<Vec<R>>()
+                    })
+                })
+                .collect();
+            let mut out = Vec::with_capacity(n_blocks);
+            for handle in handles {
+                out.extend(handle.join().expect("EM block worker panicked"));
+            }
+            out
+        })
+    }
+
     /// ll_comp_func(): marginal log-likelihood
-    fn loglik(&self, b: &[f64], p: &[f64], xpred: &[f64], work: &mut [f64]) -> f64 {
-        let k = self.k;
+    fn loglik(&self, b: &[f64], p: &[f64], xpred: &[f64]) -> f64 {
         let mut total = 0.0;
-        for i in 0..self.n {
+        for part in self.blocks(|from, to| self.loglik_block(b, p, xpred, from, to)) {
+            total += part;
+        }
+        total
+    }
+
+    fn loglik_block(&self, b: &[f64], p: &[f64], xpred: &[f64], from: usize, to: usize) -> f64 {
+        let k = self.k;
+        let mut work = vec![0.0; k];
+        let mut total = 0.0;
+        for i in from..to {
             let mut mx = f64::NEG_INFINITY;
             let mut any_nan = false;
             for c in 0..k {
@@ -133,9 +200,16 @@ impl<'a> Problem<'a> {
     }
 
     /// estep_posteriors(): post is n x k, stored by component (column-major)
-    fn estep(&self, b: &[f64], p: &[f64], xpred: &[f64], post: &mut [f64], work: &mut [f64]) {
+    fn estep(&self, b: &[f64], p: &[f64], xpred: &[f64], post: &mut [f64]) {
+        assert_eq!(post.len(), self.n * self.k);
+        let out = SharedOut(post.as_mut_ptr());
+        self.blocks(|from, to| self.estep_block(b, p, xpred, &out, from, to));
+    }
+
+    fn estep_block(&self, b: &[f64], p: &[f64], xpred: &[f64], post: &SharedOut, from: usize, to: usize) {
         let (n, k) = (self.n, self.k);
-        for i in 0..n {
+        let mut work = vec![0.0; k];
+        for i in from..to {
             let mut mx = f64::NEG_INFINITY;
             let mut any_nan = false;
             for c in 0..k {
@@ -163,23 +237,62 @@ impl<'a> Problem<'a> {
                 row += v;
             }
             for c in 0..k {
-                post[c * n + i] = work[c] / row;
+                // Safety: c * n + i < n * k, and variant i belongs to this block only
+                unsafe { post.write(c * n + i, work[c] / row) };
             }
+        }
+    }
+
+    /// colMeans(post): the mixing proportions
+    fn proportions(&self, post: &[f64], p: &mut [f64]) {
+        let (n, k) = (self.n, self.k);
+        let parts = self.blocks(|from, to| {
+            let mut sums = vec![0.0; k];
+            for c in 0..k {
+                let mut s = 0.0;
+                for i in from..to {
+                    s += post[c * n + i];
+                }
+                sums[c] = s;
+            }
+            sums
+        });
+        for c in 0..k {
+            let mut s = 0.0;
+            for part in &parts {
+                s += part[c];
+            }
+            p[c] = s / n as f64;
         }
     }
 
     /// slope_est_func()
     fn slopes(&self, xpred: &[f64], post: &[f64], b: &mut [f64]) {
-        let n = self.n;
-        for (c, slope) in b.iter_mut().enumerate().take(self.k) {
+        let (n, k) = (self.n, self.k);
+        // per block: numerators of the k slopes, then denominators
+        let parts = self.blocks(|from, to| {
+            let mut sums = vec![0.0; 2 * k];
+            for c in 0..k {
+                let mut numer = 0.0;
+                let mut denom = 0.0;
+                for i in from..to {
+                    let w = self.slope_w[i];
+                    let pc = post[c * n + i];
+                    let xp = xpred[i];
+                    numer += (pc * xp * (self.sx2[i] * self.y[i] - self.c12[i] * (self.x[i] - xp))) / w;
+                    denom += (pc * self.sx2[i] * (xp * xp)) / w;
+                }
+                sums[c] = numer;
+                sums[k + c] = denom;
+            }
+            sums
+        });
+        for (c, slope) in b.iter_mut().enumerate().take(k) {
             let mut numer = 0.0;
             let mut denom = 0.0;
-            for i in 0..n {
-                let w = self.slope_w[i];
-                let pc = post[c * n + i];
-                let xp = xpred[i];
-                numer += (pc * xp * (self.sx2[i] * self.y[i] - self.c12[i] * (self.x[i] - xp))) / w;
-                denom += (pc * self.sx2[i] * (xp * xp)) / w;
+            for part in &parts {
+                numer += part[c];
+                denom += part[k + c];
             }
             *slope = numer / denom;
         }
@@ -188,19 +301,45 @@ impl<'a> Problem<'a> {
     /// xpred_est_func(): update of the latent target effects
     fn xpred(&self, b: &[f64], post: &[f64], out: &mut [f64]) {
         let (n, k) = (self.n, self.k);
-        for i in 0..n {
-            let mut numer = 0.0;
-            let mut denom = 0.0;
-            for c in 0..k {
-                let pc = post[c * n + i];
-                let bc = b[c];
-                numer += pc
-                    * (self.x[i] * (self.sy2[i] - bc * self.c12[i])
-                        + self.y[i] * (bc * self.sx2[i] - self.c12[i]));
-                denom += pc * (self.sy2[i] + bc * bc * self.sx2[i] - 2.0 * bc * self.c12[i]);
+        assert_eq!(out.len(), n);
+        let out = SharedOut(out.as_mut_ptr());
+        let out = &out;
+        self.blocks(|from, to| {
+            for i in from..to {
+                let mut numer = 0.0;
+                let mut denom = 0.0;
+                for c in 0..k {
+                    let pc = post[c * n + i];
+                    let bc = b[c];
+                    numer += pc
+                        * (self.x[i] * (self.sy2[i] - bc * self.c12[i])
+                            + self.y[i] * (bc * self.sx2[i] - self.c12[i]));
+                    denom += pc * (self.sy2[i] + bc * bc * self.sx2[i] - 2.0 * bc * self.c12[i]);
+                }
+                // Safety: i < n, and variant i belongs to this block only
+                unsafe { out.write(i, numer / denom) };
             }
-            out[i] = numer / denom;
+        });
+    }
+
+    /// sum(Q_loglik_matrix)
+    fn q_loglik(&self, b: &[f64], p: &[f64], xpred: &[f64], post: &[f64]) -> f64 {
+        let (n, k) = (self.n, self.k);
+        let parts = self.blocks(|from, to| {
+            let mut q = 0.0;
+            for c in 0..k {
+                let log_p = p[c].ln();
+                for i in from..to {
+                    q += post[c * n + i] * (self.logdens(i, b[c], xpred[i]) + log_p);
+                }
+            }
+            q
+        });
+        let mut total = 0.0;
+        for part in parts {
+            total += part;
         }
+        total
     }
 
     /// One EM cycle (em_fixed_point, estimator "MLE"): theta = (b, p, X).
@@ -210,29 +349,19 @@ impl<'a> Problem<'a> {
         out: &mut [f64],
         scratch: &mut Scratch,
     ) -> Result<(), FitFailed> {
-        let (n, k) = (self.n, self.k);
+        let k = self.k;
         let (b_curr, rest) = theta.split_at(k);
         let (p_curr, x_curr) = rest.split_at(k);
         let mut post = std::mem::take(&mut scratch.post);
-        let mut work = std::mem::take(&mut scratch.work);
 
         // E step
-        self.estep(b_curr, p_curr, x_curr, &mut post, &mut work);
+        self.estep(b_curr, p_curr, x_curr, &mut post);
 
         // M step
         let (b_new, rest) = out.split_at_mut(k);
         let (p_new, x_new) = rest.split_at_mut(k);
-        let mut any_zero = false;
-        for c in 0..k {
-            let mut s = 0.0;
-            for i in 0..n {
-                s += post[c * n + i];
-            }
-            p_new[c] = s / n as f64;
-            if p_new[c] == 0.0 {
-                any_zero = true;
-            }
-        }
+        self.proportions(&post, p_new);
+        let any_zero = p_new.contains(&0.0);
         if any_zero {
             let mut s = 0.0;
             for value in p_new.iter_mut() {
@@ -259,14 +388,7 @@ impl<'a> Problem<'a> {
             x_new.copy_from_slice(&x_next);
             scratch.x_next = x_next;
 
-            // sum(Q_loglik_matrix)
-            let mut q_new = 0.0;
-            for c in 0..k {
-                let log_p = p_new[c].ln();
-                for i in 0..n {
-                    q_new += post[c * n + i] * (self.logdens(i, b_new[c], x_new[i]) + log_p);
-                }
-            }
+            let q_new = self.q_loglik(b_new, p_new, x_new, &post);
 
             let change = ((q_new - q_old) / q_new).abs();
             if change.is_nan() {
@@ -280,7 +402,6 @@ impl<'a> Problem<'a> {
         }
 
         scratch.post = post;
-        scratch.work = work;
         result?;
         if out.iter().any(|v| v.is_nan()) {
             return Err(FitFailed);
@@ -291,7 +412,6 @@ impl<'a> Problem<'a> {
 
 struct Scratch {
     post: Vec<f64>,
-    work: Vec<f64>,
     x_next: Vec<f64>,
 }
 
@@ -299,7 +419,6 @@ impl Scratch {
     fn new(n: usize, k: usize) -> Self {
         Scratch {
             post: vec![0.0; n * k],
-            work: vec![0.0; k],
             x_next: vec![0.0; n],
         }
     }
@@ -323,10 +442,7 @@ fn squarem_fit(
     let (n, k) = (problem.n, problem.k);
     let len = 2 * k + n;
     let mut scratch = Scratch::new(n, k);
-    let mut work = vec![0.0; k];
-    let objective = |theta: &[f64], work: &mut [f64]| {
-        problem.loglik(&theta[..k], &theta[k..2 * k], &theta[2 * k..], work)
-    };
+    let objective = |theta: &[f64]| problem.loglik(&theta[..k], &theta[k..2 * k], &theta[2 * k..]);
 
     let step_min = 1.0_f64;
     let step_max0 = 1.0_f64;
@@ -339,7 +455,7 @@ fn squarem_fit(
     let mut p2 = vec![0.0; len];
     let mut p_new = vec![0.0; len];
     let mut p_tmp = vec![0.0; len];
-    let mut lold = objective(&p, &mut work);
+    let mut lold = objective(&p);
     let mut feval = 0usize;
 
     while feval < max_iter {
@@ -398,20 +514,20 @@ fn squarem_fit(
         let lnew;
         if extrapolation_failed {
             p_new.copy_from_slice(&p2);
-            lnew = objective(&p2, &mut work);
+            lnew = objective(&p2);
             if alpha == step_max {
                 step_max = step_max0.max(step_max / mstep);
             }
             alpha = 1.0;
         } else {
-            let candidate = objective(&p_new, &mut work);
+            let candidate = objective(&p_new);
             if !candidate.is_nan() && lold.is_nan() {
                 // R: the monotonicity comparison is NA and `if` fails
                 return Err(FitFailed);
             }
             if candidate.is_nan() || candidate < lold - objfn_inc {
                 p_new.copy_from_slice(&p2);
-                lnew = objective(&p2, &mut work);
+                lnew = objective(&p2);
                 if alpha == step_max {
                     step_max = step_max0.max(step_max / mstep);
                 }
@@ -431,7 +547,7 @@ fn squarem_fit(
 
     let converged = feval < max_iter;
     // magicmap_1k recalculates the log-likelihood at the returned parameters
-    let loglik = objective(&p, &mut work);
+    let loglik = objective(&p);
     Ok(StartFit {
         theta: p,
         loglik,
@@ -483,7 +599,13 @@ pub unsafe extern "C" fn magicmap_em_starts(
         let y = slice::from_raw_parts(y, n);
         let sy = slice::from_raw_parts(sy, n);
         let starts = slice::from_raw_parts(starts, n_starts * 2 * k);
-        let problem = Problem::new(x, sx, y, sy, re, k, inner_tol, max_iter);
+        // one thread per start first; any left over share the blocks within a start
+        let workers = worker_count(n_starts, requested_threads);
+        let available = thread::available_parallelism()
+            .map(|value| value.get())
+            .unwrap_or(1);
+        let block_threads = (requested_threads.max(1).min(available) / workers.max(1)).max(1);
+        let problem = Problem::new(x, sx, y, sy, re, k, inner_tol, max_iter, block_threads);
 
         let fit_one = |s: usize| -> Option<StartFit> {
             let mut theta = Vec::with_capacity(2 * k + n);
@@ -494,7 +616,6 @@ pub unsafe extern "C" fn magicmap_em_starts(
             squarem_fit(&problem, &theta, em_tol, max_iter).ok()
         };
 
-        let workers = worker_count(n_starts, requested_threads);
         let mut fits: Vec<Option<StartFit>> = Vec::with_capacity(n_starts);
         if workers <= 1 {
             for s in 0..n_starts {
