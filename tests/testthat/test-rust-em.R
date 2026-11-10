@@ -1,9 +1,8 @@
 # The rust engine is a like-for-like port of the R fit; the R code is the reference.
 
 make_em_inputs <- function(n = 60L, slopes = c(1.5, 0.3), props = c(0.6, 0.4),
-                           re = 0.2, p_threshold = NULL, seed = 1L) {
+                           re = 0.2, seed = 1L) {
   set.seed(seed)
-  z_min <- if (is.null(p_threshold)) 0 else stats::qnorm(p_threshold / 2, lower.tail = FALSE)
   out <- NULL
   while (is.null(out) || nrow(out) < n) {
     m <- 50000L
@@ -12,19 +11,18 @@ make_em_inputs <- function(n = 60L, slopes = c(1.5, 0.3), props = c(0.6, 0.4),
     ex <- stats::rnorm(m)
     ey <- re * ex + sqrt(1 - re^2) * stats::rnorm(m)
     d <- data.frame(x = true_x + ex, sx = 1, y = slopes[comp] * true_x + ey, sy = 1)
-    out <- rbind(out, d[abs(d$x) >= max(z_min, 2), ])
+    out <- rbind(out, d[abs(d$x) >= 2, ])
   }
   out <- out[seq_len(n), ]
   flip <- sign(out$x)
   out$x <- out$x * flip
   out$y <- out$y * flip
   rownames(out) <- paste0("v", seq_len(n))
-  list(data = out, re = re, tx = if (is.null(p_threshold)) NULL else z_min * out$sx)
+  list(data = out, re = re)
 }
 
 fit_em <- function(inputs, k, engine, ...) {
-  suppressWarnings(MAGICMAP:::magicmap_1k(inputs$data, inputs$re, k, tx = inputs$tx,
-                                          engine = engine, ...))
+  suppressWarnings(MAGICMAP:::magicmap_1k(inputs$data, inputs$re, k, engine = engine, ...))
 }
 
 expect_same_fit <- function(rust, reference, tolerance = 1e-8) {
@@ -46,17 +44,9 @@ test_that("rust engine agrees with the R reference from the clustering start", {
   }
 })
 
-test_that("rust engine agrees with the R reference with selection on the target trait", {
-  inputs <- make_em_inputs(p_threshold = 5e-8, seed = 12L)
-  for (k in 1:3) {
-    expect_same_fit(fit_em(inputs, k, "rust"), fit_em(inputs, k, "R"))
-  }
-})
-
 test_that("rust engine agrees with the R reference over several starting points", {
-  for (threshold in list(NULL, 5e-8)) {
-    inputs <- make_em_inputs(slopes = c(2, 1, 0.2), props = c(0.4, 0.4, 0.2),
-                             p_threshold = threshold, seed = 13L)
+  for (seed in c(13L, 16L)) {
+    inputs <- make_em_inputs(slopes = c(2, 1, 0.2), props = c(0.4, 0.4, 0.2), seed = seed)
     previous <- fit_em(inputs, 2, "R", nStarts = 5)
     prev <- list(b = previous$slopes$b, p = previous$component_proportions)
     expect_same_fit(fit_em(inputs, 3, "rust", nStarts = 5, prev = prev),
@@ -65,7 +55,7 @@ test_that("rust engine agrees with the R reference over several starting points"
 })
 
 test_that("rust engine results do not depend on the number of threads", {
-  inputs <- make_em_inputs(p_threshold = 5e-8, seed = 14L)
+  inputs <- make_em_inputs(seed = 14L)
   one <- fit_em(inputs, 3, "rust", nStarts = 8, threads = 1)
   four <- fit_em(inputs, 3, "rust", nStarts = 8, threads = 4)
   expect_identical(one, four)

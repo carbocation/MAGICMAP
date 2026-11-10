@@ -4,10 +4,10 @@
 #include <R_ext/Visibility.h>
 
 extern SEXP C_magicmap_em_starts(
-    SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
+    SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 
 static const R_CallMethodDef CallEntries[] = {
-    {"magicmap_em_starts", (DL_FUNC) &C_magicmap_em_starts, 12},
+    {"magicmap_em_starts", (DL_FUNC) &C_magicmap_em_starts, 11},
     {NULL, NULL, 0}
 };
 

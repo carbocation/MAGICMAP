@@ -17,7 +17,6 @@ magicmap(
   ComparatorYIntercept = 1,
   forceAllK = FALSE,
   inflateSEs = FALSE,
-  TargetXPThreshold = NULL,
   nStarts = 0,
   engine = "R",
   threads = 1,
@@ -53,11 +52,9 @@ magicmap(
 
 \item{inflateSEs}{Logical, whether to apply LSDC h2 intercept adjustment to the input standard errors. By default, input SEs are used as given.}
 
-\item{TargetXPThreshold}{(Optional) P-value threshold that every variant had to pass for the target (x axis) trait in order to be included, e.g. \code{5e-8} for genome-wide significant lead variants. When given, each variant's likelihood is conditioned on having passed that threshold (a truncated bivariate normal), which corrects the overestimation of target effects that are close to the threshold ("winner's curse") and the resulting bias of slopes towards zero. Requires that variants were selected on the target trait alone, using the betas and standard errors supplied in \code{data}; it is an error if any variant does not pass the threshold. Default NULL, which assumes variants were not selected on their target trait association. Not available with \code{estimator="alt_MLE"}. The SCOUTJOY test is not adjusted for selection.}
-
 \item{nStarts}{(Optional) Number of additional starting points to fit each model from. The fitting algorithm (EM) only climbs to the nearest maximum of the likelihood, and mixture likelihoods usually have several, so a single start can return a poor solution. Default 0, which fits each model from a single start (a clustering of the per-variant effect ratios). When greater than 0, each model with more than one component is fit from (1) a clustering of the per-variant effect ratios, (2) when the model with one fewer component was also fit, that solution with each line split in two and with a new line through the variant furthest from all of its lines, and (3) \code{nStarts} sets of slopes spread evenly over the range of the per-variant ratios. The fit with the highest log-likelihood is kept. No random numbers are used, so results are identical on every run. How many starts are needed depends on the data: the \code{n_starts_best} column of \code{fit_stats} gives how many starts reached the best log-likelihood, and results should be checked for stability at a larger value. Because the starts in (2) depend on the fit with one fewer component, a larger \code{nStarts} usually, but not always, gives an equal or higher log-likelihood.}
 
-\item{engine}{Which implementation runs the EM fit: "R" (default) or "rust". The rust engine is a compiled, like-for-like port of the R code (same updates, tolerances and acceleration scheme), so it reaches the same solutions, with estimates agreeing to many digits but not necessarily to the last one. It is much faster, which matters mainly when \code{nStarts} is large. Only available with \code{estimator="MLE"}. Models with one component and no \code{TargetXPThreshold} are always fit by the R code.}
+\item{engine}{Which implementation runs the EM fit: "R" (default) or "rust". The rust engine is a compiled, like-for-like port of the R code (same updates, tolerances and acceleration scheme), so it reaches the same solutions, with estimates agreeing to many digits but not necessarily to the last one. It is much faster, which matters mainly when \code{nStarts} is large. Only available with \code{estimator="MLE"}. Models with one component are always fit by the R code (a York regression).}
 
 \item{threads}{Number of threads the rust engine spreads the starting points over. Default 1. Each starting point is fit independently, so results do not depend on this value. Ignored by the R engine.}
 
@@ -83,7 +80,7 @@ A list of class 'magicmap' containing:
   \item{\code{fit_stats}}{
     Table of fit statistics for the mixture model with each requested value of \code{k}. Includes:
     \itemize{
-      \item \code{logLik}: log of the complete data (marginal) likelihood; conditional on selection when \code{TargetXPThreshold} is given, so not comparable to a fit without it
+      \item \code{logLik}: log of the complete data (marginal) likelihood
       \item \code{model_df}: the number of free paramters in the model, excluding nuisance parameters
       \item \code{BIC}: Bayesian information criterion; lower values indicate a better combination of fit and complexity
       \item \code{AIC}: Akaike information criterion; lower values indicate a better combination of fit and complexity
@@ -112,7 +109,7 @@ A list of class 'magicmap' containing:
   }
 
   \item{\code{assignments}}{
-    Data frame with one row per variant giving the mixture component with the highest posterior probability (\code{component}), that probability (\code{posterior}), and how well the variant fits that component's line: \code{distance2} is the squared distance from the observed effects to the line in standard error units, and \code{distance_p} its p-value (chi-square, 1 df). Posterior probabilities only compare the components with each other, so a variant that is far from every line can still have a posterior near 1; a small \code{distance_p} identifies such variants. Distances use the observed effects and are not adjusted for \code{TargetXPThreshold}.
+    Data frame with one row per variant giving the mixture component with the highest posterior probability (\code{component}), that probability (\code{posterior}), and how well the variant fits that component's line: \code{distance2} is the squared distance from the observed effects to the line in standard error units, and \code{distance_p} its p-value (chi-square, 1 df). Posterior probabilities only compare the components with each other, so a variant that is far from every line can still have a posterior near 1; a small \code{distance_p} identifies such variants.
   }
 
   \item{\code{call}}{

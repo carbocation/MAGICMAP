@@ -10,7 +10,6 @@
 # * prev: NULL, or list(b, p) with the slopes and proportions of the fitted model with k-1 components, used to build starting points
 # * engine: "R" or "rust"; which implementation runs the EM fit from each starting point
 # * threads: number of threads over which the rust engine spreads the starting points
-# * tx: NULL, or vector of truncation points for selection on the target trait (variant j was included because |x_j| >= tx_j)
 # * maxIterations: maximum number of iterations for fitting; applies to both EM and M-step regression iterations
 # * EMTolerance: convergence criteria for EM algorithm, in terms of relative change in loglik
 # * InnerTolerance: convergence criteria for fitting slope at M step, in terms of relative change in loglik
@@ -20,7 +19,7 @@
 # structured list of class 'magicmap_single', without scoutjoy_test
 
 
-magicmap_1k <- function(data, re, k, estimator="MLE", maxIterations=1000, EMTolerance=1e-12, InnerTolerance=1e-12, verbose=FALSE, tx=NULL, nStarts=0, prev=NULL, engine="R", threads=1){
+magicmap_1k <- function(data, re, k, estimator="MLE", maxIterations=1000, EMTolerance=1e-12, InnerTolerance=1e-12, verbose=FALSE, nStarts=0, prev=NULL, engine="R", threads=1){
   
   # sanity checks
   if(class(data)[1] != "data.frame"){
@@ -45,20 +44,10 @@ magicmap_1k <- function(data, re, k, estimator="MLE", maxIterations=1000, EMTole
   colnames(dat) <- c("x","sx","y","sy")
   dat$re <- rep(re,nrow(dat))
   
-  # selection on the target trait (see selection_logprob)
-  selected <- !is.null(tx)
-  if(selected){
-    if(estimator == "alt_MLE"){
-      stop("estimator \'alt_MLE\' is not available with TargetXPThreshold; use \'MLE\' or \'numeric\'.")
-    }
-    dat$tx <- tx
-  }
-  
   ##################  
   
   # single component
-  # (york regression has no selection term, so with selection k=1 is fit by the EM code below)
-  if(k==1 && !selected){
+  if(k==1){
     york <- suppressWarnings(yorktools::york(dat,intercept=0,method = "ML",tol=InnerTolerance,maxit=maxIterations,verbose=verbose))
     b_est <- york$b[1]
     p_est <- 1
@@ -78,11 +67,7 @@ magicmap_1k <- function(data, re, k, estimator="MLE", maxIterations=1000, EMTole
     ratio_var <- dat$sy^2/dat$x^2 + 
                     dat$y^2*dat$sx^2/dat$x^4 -
                     2*re*dat$y*dat$sy*dat$sx/dat$x^3
-    if(k==1){
-      init_clust <- rep(1, nrow(dat))
-    }else{
-      init_clust <- Ckmeans.1d.dp::Ckmeans.1d.dp(ratios,k=k,y=1/ratio_var)$cluster
-    }
+    init_clust <- Ckmeans.1d.dp::Ckmeans.1d.dp(ratios,k=k,y=1/ratio_var)$cluster
     
     # initial parameters
     b_init <- rep(NA,k)
@@ -162,9 +147,8 @@ magicmap_1k <- function(data, re, k, estimator="MLE", maxIterations=1000, EMTole
             b_new <- slope_est_func2(data, b_new, post_curr)
           }
           
-          x_new <- xpred_est_func_sel(data, b_new, post_curr)
-          ll_Q_y_new <- sum(Q_loglik_matrix(data, b_new, p_new, x_new, post_curr)) - 
-                          sum(selection_logprob(data, x_new)$logA)
+          x_new <- xpred_est_func(data, b_new, post_curr)
+          ll_Q_y_new <- sum(Q_loglik_matrix(data, b_new, p_new, x_new, post_curr))
           
           # Check inner York convergence
           if(abs((ll_Q_y_new - ll_Q_y_old) / ll_Q_y_new) < inn_tol) {
@@ -424,14 +408,11 @@ magicmap_1k <- function(data, re, k, estimator="MLE", maxIterations=1000, EMTole
 #' @param inflateSEs
 #' Logical, whether to apply LSDC h2 intercept adjustment to the input standard errors. By default, input SEs are used as given.
 #' 
-#' @param TargetXPThreshold
-#' (Optional) P-value threshold that every variant had to pass for the target (x axis) trait in order to be included, e.g. \code{5e-8} for genome-wide significant lead variants. When given, each variant's likelihood is conditioned on having passed that threshold (a truncated bivariate normal), which corrects the overestimation of target effects that are close to the threshold ("winner's curse") and the resulting bias of slopes towards zero. Requires that variants were selected on the target trait alone, using the betas and standard errors supplied in \code{data}; it is an error if any variant does not pass the threshold. Default NULL, which assumes variants were not selected on their target trait association. Not available with \code{estimator="alt_MLE"}. The SCOUTJOY test is not adjusted for selection.
-#' 
 #' @param nStarts
 #' (Optional) Number of additional starting points to fit each model from. The fitting algorithm (EM) only climbs to the nearest maximum of the likelihood, and mixture likelihoods usually have several, so a single start can return a poor solution. Default 0, which fits each model from a single start (a clustering of the per-variant effect ratios). When greater than 0, each model with more than one component is fit from (1) a clustering of the per-variant effect ratios, (2) when the model with one fewer component was also fit, that solution with each line split in two and with a new line through the variant furthest from all of its lines, and (3) \code{nStarts} sets of slopes spread evenly over the range of the per-variant ratios. The fit with the highest log-likelihood is kept. No random numbers are used, so results are identical on every run. How many starts are needed depends on the data: the \code{n_starts_best} column of \code{fit_stats} gives how many starts reached the best log-likelihood, and results should be checked for stability at a larger value. Because the starts in (2) depend on the fit with one fewer component, a larger \code{nStarts} usually, but not always, gives an equal or higher log-likelihood.
 #' 
 #' @param engine
-#' Which implementation runs the EM fit: "R" (default) or "rust". The rust engine is a compiled, like-for-like port of the R code (same updates, tolerances and acceleration scheme), so it reaches the same solutions, with estimates agreeing to many digits but not necessarily to the last one. It is much faster, which matters mainly when \code{nStarts} is large. Only available with \code{estimator="MLE"}. Models with one component and no \code{TargetXPThreshold} are always fit by the R code.
+#' Which implementation runs the EM fit: "R" (default) or "rust". The rust engine is a compiled, like-for-like port of the R code (same updates, tolerances and acceleration scheme), so it reaches the same solutions, with estimates agreeing to many digits but not necessarily to the last one. It is much faster, which matters mainly when \code{nStarts} is large. Only available with \code{estimator="MLE"}. Models with one component are always fit by the R code (a York regression).
 #' 
 #' @param threads
 #' Number of threads the rust engine spreads the starting points over. Default 1. Each starting point is fit independently, so results do not depend on this value. Ignored by the R engine.
@@ -464,7 +445,7 @@ magicmap_1k <- function(data, re, k, estimator="MLE", maxIterations=1000, EMTole
 #'   \item{\code{fit_stats}}{
 #'     Table of fit statistics for the mixture model with each requested value of \code{k}. Includes:
 #'     \itemize{
-#'       \item \code{logLik}: log of the complete data (marginal) likelihood; conditional on selection when \code{TargetXPThreshold} is given, so not comparable to a fit without it
+#'       \item \code{logLik}: log of the complete data (marginal) likelihood
 #'       \item \code{model_df}: the number of free paramters in the model, excluding nuisance parameters
 #'       \item \code{BIC}: Bayesian information criterion; lower values indicate a better combination of fit and complexity
 #'       \item \code{AIC}: Akaike information criterion; lower values indicate a better combination of fit and complexity
@@ -493,7 +474,7 @@ magicmap_1k <- function(data, re, k, estimator="MLE", maxIterations=1000, EMTole
 #'   }
 #'
 #'   \item{\code{assignments}}{
-#'     Data frame with one row per variant giving the mixture component with the highest posterior probability (\code{component}), that probability (\code{posterior}), and how well the variant fits that component's line: \code{distance2} is the squared distance from the observed effects to the line in standard error units, and \code{distance_p} its p-value (chi-square, 1 df). Posterior probabilities only compare the components with each other, so a variant that is far from every line can still have a posterior near 1; a small \code{distance_p} identifies such variants. Distances use the observed effects and are not adjusted for \code{TargetXPThreshold}.
+#'     Data frame with one row per variant giving the mixture component with the highest posterior probability (\code{component}), that probability (\code{posterior}), and how well the variant fits that component's line: \code{distance2} is the squared distance from the observed effects to the line in standard error units, and \code{distance_p} its p-value (chi-square, 1 df). Posterior probabilities only compare the components with each other, so a variant that is far from every line can still have a posterior near 1; a small \code{distance_p} identifies such variants.
 #'   }
 #'
 #'   \item{\code{call}}{
@@ -515,7 +496,7 @@ magicmap_1k <- function(data, re, k, estimator="MLE", maxIterations=1000, EMTole
 #' @export 
 #'
 
-magicmap <- function(data, betaTargetX, sdTargetX, betaComparatorY, sdComparatorY, k, ids = NULL, CovIntercept = 0, TargetXIntercept=1, ComparatorYIntercept=1, forceAllK=FALSE, inflateSEs=FALSE, TargetXPThreshold=NULL, nStarts=0, engine="R", threads=1, estimator="MLE", maxIterations=1000, EMTolerance=1e-12, InnerTolerance=1e-12, verbose=FALSE){
+magicmap <- function(data, betaTargetX, sdTargetX, betaComparatorY, sdComparatorY, k, ids = NULL, CovIntercept = 0, TargetXIntercept=1, ComparatorYIntercept=1, forceAllK=FALSE, inflateSEs=FALSE, nStarts=0, engine="R", threads=1, estimator="MLE", maxIterations=1000, EMTolerance=1e-12, InnerTolerance=1e-12, verbose=FALSE){
 
   # sanity checks
   if((length(betaTargetX)!=1) || (length(sdTargetX)!=1) || (length(betaComparatorY)!=1) || (length(sdComparatorY)!=1)){
@@ -528,15 +509,6 @@ magicmap <- function(data, betaTargetX, sdTargetX, betaComparatorY, sdComparator
   
   if(!(estimator %in% c("MLE","alt_MLE","numeric"))){
     stop("estimator must be one of \'MLE\', \'alt_MLE\', or \'numeric\'.")
-  }
-  
-  if(!is.null(TargetXPThreshold)){
-    if(!is.numeric(TargetXPThreshold) || length(TargetXPThreshold)!=1 || is.na(TargetXPThreshold) || TargetXPThreshold <= 0 || TargetXPThreshold >= 1){
-      stop("TargetXPThreshold must be a single p-value threshold between 0 and 1, or NULL.")
-    }
-    if(estimator == "alt_MLE"){
-      stop("estimator \'alt_MLE\' is not available with TargetXPThreshold; use \'MLE\' or \'numeric\'.")
-    }
   }
   
   if(length(engine)!=1 || !(engine %in% c("R","rust"))){
@@ -567,20 +539,6 @@ magicmap <- function(data, betaTargetX, sdTargetX, betaComparatorY, sdComparator
   }
   
   data[, c(betaComparatorY, betaTargetX)] <- data[, c(betaComparatorY, betaTargetX)] * sign(data[, betaTargetX[1]])
-  
-  # selection on the target trait: variants were included because |beta/se| passed
-  # the z threshold, using the SEs as supplied (before any inflation below)
-  tx <- NULL
-  if(!is.null(TargetXPThreshold)){
-    z_threshold <- stats::qnorm(TargetXPThreshold/2, lower.tail=FALSE)
-    z_target <- abs(data[,betaTargetX]/data[,sdTargetX])
-    if(any(z_target < z_threshold)){
-      stop(paste0(sum(z_target < z_threshold), " variants do not pass TargetXPThreshold=", TargetXPThreshold,
-                  " for the target trait (smallest |z| = ", signif(min(z_target),4), ", threshold |z| = ", signif(z_threshold,4),
-                  "). Remove them or give the threshold that was actually used to select variants."))
-    }
-    tx <- z_threshold*data[,sdTargetX]
-  }
   
   # handle covariance
   re <- CovIntercept / sqrt(TargetXIntercept*ComparatorYIntercept)
@@ -620,7 +578,6 @@ magicmap <- function(data, betaTargetX, sdTargetX, betaComparatorY, sdComparator
                        EMTolerance=EMTolerance, 
                        InnerTolerance=InnerTolerance, 
                        verbose=verbose,
-                       tx=tx,
                        nStarts=nStarts,
                        prev=prev,
                        engine=engine,

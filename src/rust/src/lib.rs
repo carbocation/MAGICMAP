@@ -18,11 +18,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::slice;
 use std::thread;
 
-/// log of the standard normal lower tail probability, supplied by R (pnorm5).
-type LogPnorm = unsafe extern "C" fn(f64) -> f64;
-
 const LN_2PI: f64 = 1.837_877_066_409_345_3;
-const LN_SQRT_2PI: f64 = 0.918_938_533_204_672_8;
 
 /// A step of the fit that R would have stopped on (an error or a NaN).
 struct FitFailed;
@@ -31,11 +27,7 @@ struct Problem<'a> {
     n: usize,
     k: usize,
     x: &'a [f64],
-    sx: &'a [f64],
     y: &'a [f64],
-    /// truncation points for selection on x; None when there was no selection
-    tx: Option<&'a [f64]>,
-    log_pnorm: LogPnorm,
     inner_tol: f64,
     max_iter: usize,
     // per-variant quantities that do not change during the fit
@@ -58,10 +50,8 @@ impl<'a> Problem<'a> {
         sx: &'a [f64],
         y: &'a [f64],
         sy: &'a [f64],
-        tx: Option<&'a [f64]>,
         re: f64,
         k: usize,
-        log_pnorm: LogPnorm,
         inner_tol: f64,
         max_iter: usize,
     ) -> Self {
@@ -88,10 +78,7 @@ impl<'a> Problem<'a> {
             n,
             k,
             x,
-            sx,
             y,
-            tx,
-            log_pnorm,
             inner_tol,
             max_iter,
             sx2,
@@ -111,44 +98,6 @@ impl<'a> Problem<'a> {
         self.dens_const[i]
             - 0.5 * (self.sy2[i] * r1 * r1 - 2.0 * self.c12[i] * r1 * r2 + self.sx2[i] * r2 * r2)
                 / self.det[i]
-    }
-
-    /// selection_logprob(): log A_i(X) and, if wanted, its first two derivatives
-    #[inline]
-    fn selection(&self, i: usize, tx: f64, xpred: f64, derivs: bool) -> (f64, f64, f64) {
-        let s = self.sx[i];
-        let a = (xpred - tx) / s;
-        let b = (-xpred - tx) / s;
-        // R's pnorm warns on NaN; keep NaN out of the callback
-        let (la, lb) = if a.is_nan() || b.is_nan() {
-            (f64::NAN, f64::NAN)
-        } else {
-            unsafe { ((self.log_pnorm)(a), (self.log_pnorm)(b)) }
-        };
-        let m = if la.is_nan() || lb.is_nan() { f64::NAN } else { la.max(lb) };
-        let log_a = m + ((la - m).exp() + (lb - m).exp()).ln();
-        if !derivs {
-            return (log_a, 0.0, 0.0);
-        }
-        let ra = (-(LN_SQRT_2PI + 0.5 * a * a) - log_a).exp();
-        let rb = (-(LN_SQRT_2PI + 0.5 * b * b) - log_a).exp();
-        let d1 = (ra - rb) / s;
-        let d2 = -(a * ra + b * rb) / (s * s) - d1 * d1;
-        (log_a, d1, d2)
-    }
-
-    /// sum over variants of log A_i(X_i); zero without selection
-    fn selection_total(&self, xpred: &[f64]) -> f64 {
-        match self.tx {
-            None => 0.0,
-            Some(tx) => {
-                let mut total = 0.0;
-                for i in 0..self.n {
-                    total += self.selection(i, tx[i], xpred[i], false).0;
-                }
-                total
-            }
-        }
     }
 
     /// ll_comp_func(): marginal log-likelihood
@@ -180,7 +129,7 @@ impl<'a> Problem<'a> {
                 total += mx;
             }
         }
-        total - self.selection_total(xpred)
+        total
     }
 
     /// estep_posteriors(): post is n x k, stored by component (column-major)
@@ -236,11 +185,9 @@ impl<'a> Problem<'a> {
         }
     }
 
-    /// xpred_est_func_sel(): update of the latent target effects, with the
-    /// bracketed Newton solve when there was selection on x
-    fn xpred(&self, b: &[f64], post: &[f64], out: &mut [f64], scratch: &mut Scratch) {
+    /// xpred_est_func(): update of the latent target effects
+    fn xpred(&self, b: &[f64], post: &[f64], out: &mut [f64]) {
         let (n, k) = (self.n, self.k);
-        // xpred_est_func(): closed form without selection
         for i in 0..n {
             let mut numer = 0.0;
             let mut denom = 0.0;
@@ -253,60 +200,6 @@ impl<'a> Problem<'a> {
                 denom += pc * (self.sy2[i] + bc * bc * self.sx2[i] - 2.0 * bc * self.c12[i]);
             }
             out[i] = numer / denom;
-        }
-        let tx = match self.tx {
-            None => return,
-            Some(tx) => tx,
-        };
-
-        let tol = 1e-12;
-        let maxit = 100;
-        let (x0, h, lo, hi) = (
-            &mut scratch.x0,
-            &mut scratch.h,
-            &mut scratch.lo,
-            &mut scratch.hi,
-        );
-        for i in 0..n {
-            let mut hi_sum = 0.0;
-            for c in 0..k {
-                let bc = b[c];
-                hi_sum += post[c * n + i]
-                    * (self.sy2[i] + bc * bc * self.sx2[i] - 2.0 * bc * self.c12[i])
-                    / self.det[i];
-            }
-            h[i] = hi_sum;
-            x0[i] = out[i];
-            lo[i] = if x0[i] < 0.0 { x0[i] } else { 0.0 };
-            hi[i] = if x0[i] > 0.0 { x0[i] } else { 0.0 };
-        }
-        // all variants are stepped together until every one has converged,
-        // as in the vectorised R loop
-        for _ in 0..maxit {
-            let mut done = true;
-            for i in 0..n {
-                let x = out[i];
-                let (_, d1, d2) = self.selection(i, tx[i], x, true);
-                let grad = -h[i] * (x - x0[i]) - d1;
-                let hess = -h[i] - d2;
-                if grad > 0.0 {
-                    lo[i] = x;
-                }
-                if grad < 0.0 {
-                    hi[i] = x;
-                }
-                let mut x_new = x - grad / hess;
-                if !x_new.is_finite() || x_new < lo[i] || x_new > hi[i] {
-                    x_new = (lo[i] + hi[i]) / 2.0;
-                }
-                if !((x_new - x).abs() <= tol * (x.abs() + self.sx[i])) {
-                    done = false;
-                }
-                out[i] = x_new;
-            }
-            if done {
-                break;
-            }
         }
     }
 
@@ -362,11 +255,11 @@ impl<'a> Problem<'a> {
             y_iter += 1;
             self.slopes(x_new, &post, b_new);
             let mut x_next = std::mem::take(&mut scratch.x_next);
-            self.xpred(b_new, &post, &mut x_next, scratch);
+            self.xpred(b_new, &post, &mut x_next);
             x_new.copy_from_slice(&x_next);
             scratch.x_next = x_next;
 
-            // sum(Q_loglik_matrix) - sum(log A)
+            // sum(Q_loglik_matrix)
             let mut q_new = 0.0;
             for c in 0..k {
                 let log_p = p_new[c].ln();
@@ -374,7 +267,6 @@ impl<'a> Problem<'a> {
                     q_new += post[c * n + i] * (self.logdens(i, b_new[c], x_new[i]) + log_p);
                 }
             }
-            q_new -= self.selection_total(x_new);
 
             let change = ((q_new - q_old) / q_new).abs();
             if change.is_nan() {
@@ -401,10 +293,6 @@ struct Scratch {
     post: Vec<f64>,
     work: Vec<f64>,
     x_next: Vec<f64>,
-    x0: Vec<f64>,
-    h: Vec<f64>,
-    lo: Vec<f64>,
-    hi: Vec<f64>,
 }
 
 impl Scratch {
@@ -413,10 +301,6 @@ impl Scratch {
             post: vec![0.0; n * k],
             work: vec![0.0; k],
             x_next: vec![0.0; n],
-            x0: vec![0.0; n],
-            h: vec![0.0; n],
-            lo: vec![0.0; n],
-            hi: vec![0.0; n],
         }
     }
 }
@@ -568,8 +452,7 @@ fn worker_count(n_starts: usize, requested_threads: usize) -> usize {
 /// Returns 0, or 1 if the routine panicked.
 ///
 /// # Safety
-/// All pointers must be valid for the lengths implied by n, k and n_starts;
-/// `tx` may be null.
+/// All pointers must be valid for the lengths implied by n, k and n_starts.
 #[no_mangle]
 #[allow(clippy::too_many_arguments)]
 pub unsafe extern "C" fn magicmap_em_starts(
@@ -577,7 +460,6 @@ pub unsafe extern "C" fn magicmap_em_starts(
     sx: *const f64,
     y: *const f64,
     sy: *const f64,
-    tx: *const f64,
     n: usize,
     re: f64,
     k: usize,
@@ -587,7 +469,6 @@ pub unsafe extern "C" fn magicmap_em_starts(
     inner_tol: f64,
     max_iter: usize,
     requested_threads: usize,
-    log_pnorm: LogPnorm,
     b_out: *mut f64,
     p_out: *mut f64,
     x_out: *mut f64,
@@ -601,13 +482,8 @@ pub unsafe extern "C" fn magicmap_em_starts(
         let sx = slice::from_raw_parts(sx, n);
         let y = slice::from_raw_parts(y, n);
         let sy = slice::from_raw_parts(sy, n);
-        let tx = if tx.is_null() {
-            None
-        } else {
-            Some(slice::from_raw_parts(tx, n))
-        };
         let starts = slice::from_raw_parts(starts, n_starts * 2 * k);
-        let problem = Problem::new(x, sx, y, sy, tx, re, k, log_pnorm, inner_tol, max_iter);
+        let problem = Problem::new(x, sx, y, sy, re, k, inner_tol, max_iter);
 
         let fit_one = |s: usize| -> Option<StartFit> {
             let mut theta = Vec::with_capacity(2 * k + n);

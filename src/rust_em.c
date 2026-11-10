@@ -1,16 +1,12 @@
 #include <R.h>
 #include <Rinternals.h>
-#include <Rmath.h>
 #include <stddef.h>
-
-typedef double (*log_pnorm_fn)(double);
 
 extern int magicmap_em_starts(
     const double *x,
     const double *sx,
     const double *y,
     const double *sy,
-    const double *tx,
     size_t n,
     double re,
     size_t k,
@@ -20,7 +16,6 @@ extern int magicmap_em_starts(
     double inner_tol,
     size_t max_iter,
     size_t requested_threads,
-    log_pnorm_fn log_pnorm,
     double *b_out,
     double *p_out,
     double *x_out,
@@ -28,12 +23,6 @@ extern int magicmap_em_starts(
     int *iter_out,
     int *converged_out,
     int *status_out);
-
-/* log of the standard normal lower tail, from R's own routine so that the
-   selection term matches selection_logprob() in R */
-static double r_log_pnorm(double value) {
-    return pnorm5(value, 0.0, 1.0, 1, 1);
-}
 
 static void check_real_vector(SEXP value, R_xlen_t length, const char *name) {
     if (!isReal(value) || XLENGTH(value) != length) {
@@ -45,7 +34,7 @@ static void check_real_vector(SEXP value, R_xlen_t length, const char *name) {
    Returns list(b, p, x, logLik, iter, converged, status); one row / element
    per start. status 0 = fitted, 1 = the fit failed (as an R error would). */
 SEXP C_magicmap_em_starts(
-    SEXP x, SEXP sx, SEXP y, SEXP sy, SEXP tx, SEXP re, SEXP k, SEXP starts,
+    SEXP x, SEXP sx, SEXP y, SEXP sy, SEXP re, SEXP k, SEXP starts,
     SEXP em_tol, SEXP inner_tol, SEXP max_iter, SEXP threads) {
 
     if (!isReal(x) || XLENGTH(x) < 1) {
@@ -55,11 +44,6 @@ SEXP C_magicmap_em_starts(
     check_real_vector(sx, n, "sx");
     check_real_vector(y, n, "y");
     check_real_vector(sy, n, "sy");
-    const double *tx_values = NULL;
-    if (!isNull(tx)) {
-        check_real_vector(tx, n, "tx");
-        tx_values = REAL(tx);
-    }
 
     int components = asInteger(k);
     if (components == NA_INTEGER || components < 1) {
@@ -98,10 +82,10 @@ SEXP C_magicmap_em_starts(
     SEXP status_out = PROTECT(allocVector(INTSXP, n_starts));
 
     int failed = magicmap_em_starts(
-        REAL(x), REAL(sx), REAL(y), REAL(sy), tx_values, (size_t) n, re_value,
+        REAL(x), REAL(sx), REAL(y), REAL(sy), (size_t) n, re_value,
         (size_t) components, REAL(starts), (size_t) n_starts,
         em_tol_value, inner_tol_value, (size_t) max_iter_value,
-        (size_t) threads_value, r_log_pnorm,
+        (size_t) threads_value,
         REAL(b_out), REAL(p_out), REAL(x_out), REAL(ll_out),
         INTEGER(iter_out), LOGICAL(converged_out), INTEGER(status_out));
     if (failed != 0) {
