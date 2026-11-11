@@ -15,7 +15,6 @@ plot_ratio_figure(
   TargetXIntercept = NULL,
   ComparatorYIntercept = NULL,
   class_thresh = 0.95,
-  poor_fit_p = 0.001,
   forest_drop_unassigned = FALSE,
   conf_region = TRUE,
   colors = NULL,
@@ -24,6 +23,7 @@ plot_ratio_figure(
   layout_heights = NULL,
   n_mc = 20000,
   seed = NULL,
+  poor_fit_p = 0.001,
   ...
 )
 }
@@ -48,8 +48,6 @@ plot_ratio_figure(
 
 \item{class_thresh}{threshold of posterior probability to use for assigning variants to components}
 
-\item{poor_fit_p}{Variants assigned to a component but whose distance from that component's line has a p-value below this threshold (\code{distance_p} in the \code{assignments} table, see \code{\link{magicmap}()}) are shown as unassigned. Default 0.001. Set to 0 or NULL to assign on posterior probability alone.}
-
 \item{forest_drop_unassigned}{omit unassigned points from forest plot (if applicable)}
 
 \item{conf_region}{Logical, whether to include 95\% confidence bands for slopes based on their SEs}
@@ -65,6 +63,8 @@ plot_ratio_figure(
 \item{n_mc}{number of monte carlo replicates to simulate to estimate the distribution of effect size ratios}
 
 \item{seed}{seed for monte carlo estimation of distribution of effect size ratios}
+
+\item{poor_fit_p}{Variants assigned to a component but whose distance from that component's line has a p-value below this threshold (\code{distance_p} in the \code{assignments} table, see \code{\link{magicmap}()}) are shown as unassigned. Default 0.001. Set to 0 or NULL to assign on posterior probability alone.}
 
 \item{...}{additional parameters (currently ignored)}
 }

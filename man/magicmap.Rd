@@ -17,12 +17,12 @@ magicmap(
   ComparatorYIntercept = 1,
   forceAllK = FALSE,
   inflateSEs = FALSE,
-  nStarts = 0,
   estimator = "MLE",
   maxIterations = 1000,
   EMTolerance = 1e-12,
   InnerTolerance = 1e-12,
-  verbose = FALSE
+  verbose = FALSE,
+  nStarts = 0
 )
 }
 \arguments{
@@ -50,8 +50,6 @@ magicmap(
 
 \item{inflateSEs}{Logical, whether to apply LSDC h2 intercept adjustment to the input standard errors. By default, input SEs are used as given.}
 
-\item{nStarts}{(Optional) Number of additional starting points to fit each model from. Default 0, which fits each model from a single start (a clustering of the per-variant effect ratios). The fitting algorithm (EM) climbs to a nearby maximum of the likelihood, and mixture likelihoods usually have several, so the solution can depend on the start. When greater than 0, each model with more than one component is fit from (1) a clustering of the per-variant effect ratios, (2) when the model with one fewer component was also fit, that solution with each line split in two and with a new line through the variant furthest from all of its lines, and (3) \code{nStarts} sets of slopes spread evenly over the range of the per-variant ratios. The fit with the highest log-likelihood is kept, and the \code{n_starts_best} column of \code{fit_stats} gives how many starts reached it. No random numbers are used, so results are identical on every run. The main use is to check how much the reported solution depends on the start: a solution reached by only a few of the starts is fragile and should be interpreted with caution. A larger \code{nStarts} should not be assumed to give a better answer. A higher log-likelihood is not necessarily a more accurate grouping of the variants, in particular when the gain comes from a line fitted to very few variants. And because the starts in (2) depend on the fit with one fewer component, a larger \code{nStarts} does not always give an equal or higher log-likelihood.}
-
 \item{estimator}{Which estimator to use for the regression slopes. One of "MLE", "alt_MLE", or "numeric".}
 
 \item{maxIterations}{Maximum number of iterations for fitting each mixture model. Applies separately to EM iterations and slope fitting iterations in each M step. Default = 1000.}
@@ -61,6 +59,8 @@ magicmap(
 \item{InnerTolerance}{Tolerance to use for convergence of slope estimator at M step, in terms of relative change in the log likelihood. Default = 1e-12.}
 
 \item{verbose}{Whether to print verbose logging. 0=no logging, 1=logging of EM iterations, 2=logging of EM and M step iterations.}
+
+\item{nStarts}{(Optional) Number of additional starting points to fit each model from. Default 0, which fits each model from a single start (a clustering of the per-variant effect ratios). The fitting algorithm (EM) climbs to a nearby maximum of the likelihood, and mixture likelihoods usually have several, so the solution can depend on the start. When greater than 0, each model with more than one component is fit from (1) a clustering of the per-variant effect ratios, (2) when the model with one fewer component was also fit, that solution with each line split in two and with a new line through the variant furthest from all of its lines, and (3) \code{nStarts} sets of slopes spread evenly over the range of the per-variant ratios. The fit with the highest log-likelihood is kept, and the \code{n_starts_best} column of \code{fit_stats} gives how many starts reached it. No random numbers are used, so results are identical on every run. The main use is to check how much the reported solution depends on the start: a solution reached by only a few of the starts is fragile and should be interpreted with caution. A larger \code{nStarts} should not be assumed to give a better answer. A higher log-likelihood is not necessarily a more accurate grouping of the variants, in particular when the gain comes from a line fitted to very few variants. And because the starts in (2) depend on the fit with one fewer component, a larger \code{nStarts} does not always give an equal or higher log-likelihood.}
 }
 \value{
 A list of class 'magicmap' containing:
