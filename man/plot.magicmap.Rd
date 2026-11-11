@@ -9,7 +9,6 @@
   model,
   which_model = NULL,
   class_thresh = 0.95,
-  poor_fit_p = 0.001,
   diagnostics = c("summary"),
   outer_title = NULL,
   label_comp = NULL,
@@ -27,6 +26,7 @@
   TargetXIntercept = NULL,
   ComparatorYIntercept = NULL,
   hide_warnings = FALSE,
+  poor_fit_p = 0.001,
   ...
 )
 
@@ -34,7 +34,6 @@
   model,
   which_model = NULL,
   class_thresh = 0.95,
-  poor_fit_p = 0.001,
   diagnostics = c("summary"),
   outer_title = NULL,
   label_comp = NULL,
@@ -52,6 +51,7 @@
   TargetXIntercept = NULL,
   ComparatorYIntercept = NULL,
   hide_warnings = FALSE,
+  poor_fit_p = 0.001,
   ...
 )
 }
@@ -61,8 +61,6 @@
 \item{which_model}{numeric, which model to plot (when multiple models were fit). Default is the lowest-BIC model among those that converged (\code{converged == TRUE}), or the lowest-BIC model overall if none converged.}
 
 \item{class_thresh}{threshold of posterior probability to use for assigning variants to components}
-
-\item{poor_fit_p}{Variants assigned to a component but whose distance from that component's line has a p-value below this threshold (\code{distance_p} in the \code{assignments} table, see \code{\link{magicmap}()}) are shown as unassigned. Default 0.001. Set to 0 or NULL to assign on posterior probability alone.}
 
 \item{diagnostics}{Which homogeneity diagnostics to annotate. Can include "summary" (legend with categorical decisions) and/or "details" (metrics annotated on regression line).}
 
@@ -97,6 +95,8 @@
 \item{ComparatorYIntercept}{For adding profiling to old MAGICMAP objects without saved call information, the intercept from LDSC heritability analysis of the comparator (y axis) trait used to fit MAGICMAP.}
 
 \item{hide_warnings}{Logical, whether to skip printing warnings (highly discouraged)}
+
+\item{poor_fit_p}{Variants assigned to a component but whose distance from that component's line has a p-value below this threshold (\code{distance_p} in the \code{assignments} table, see \code{\link{magicmap}()}) are shown as unassigned. Default 0.001. Set to 0 or NULL to assign on posterior probability alone.}
 
 \item{...}{additional parameters to be passed directly to \code{\link[base]{plot}()}}
 }
