@@ -270,7 +270,7 @@ magicmap_1k <- function(data, re, k, estimator="MLE", maxIterations=1000, EMTole
   se_slope <- rep(NA_real_, k)
   se_model <- rep(NA_real_, k)
   if(is.finite(ll_comp) && !empty_comp){
-    vc <- tryCatch(magicmap_vcov(dat, b_est, p_est, x_est),
+    vc <- tryCatch(magicmap_vcov(dat, b_est, p_est, x_est, engine, threads),
                    error = function(e){
                      warning(paste0("Could not calculate SEs for k=", k, ": ", conditionMessage(e)))
                      NULL

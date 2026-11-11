@@ -71,6 +71,22 @@ test_that("rust engine results do not depend on the number of threads within a s
   expect_same_fit(one, fit_em(inputs, 2, "R"))
 })
 
+test_that("standard-error sums in compiled code agree with the R reference", {
+  for (k in 1:4) {
+    inputs <- make_em_inputs(n = 300L, slopes = c(2, 1, 0.2), props = c(0.4, 0.4, 0.2), seed = 18L)
+    fit <- fit_em(inputs, k, "R")
+    dat <- cbind(inputs$data, re = inputs$re)
+    reference <- suppressWarnings(MAGICMAP:::magicmap_vcov(
+      dat, fit$slopes$b, fit$component_proportions, fit$predicted_target_betas))
+    for (threads in c(1, 3)) {
+      compiled <- suppressWarnings(MAGICMAP:::magicmap_vcov(
+        dat, fit$slopes$b, fit$component_proportions, fit$predicted_target_betas,
+        engine = "rust", threads = threads))
+      expect_equal(compiled, reference, tolerance = 1e-9)
+    }
+  }
+})
+
 test_that("rust engine is refused for estimators it does not implement", {
   inputs <- make_em_inputs(seed = 15L)
   expect_error(fit_em(inputs, 2, "rust", estimator = "numeric"), "only available")

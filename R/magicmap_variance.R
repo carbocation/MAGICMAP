@@ -15,18 +15,36 @@
 # Arguments:
 # * data: data frame with columns x, sx, y, sy, re
 # * beta, priorp, xpred: fitted slopes, mixing proportions, and latent X
+# * engine: "R" or "rust"; with "rust" the sums over variants are done in
+#   compiled code (same terms; the R code is the reference), using `threads`
 #
 # Returns list with:
 # * vcov: model-based covariance (inverse profiled observed information)
 # * vcov_robust: sandwich covariance (I^-1 B I^-1), using per-SNP scores
 # * se_slope, se_slope_robust, se_prop, se_prop_robust: SEs; se_prop has length K
 
-magicmap_vcov <- function(data, beta, priorp, xpred){
+magicmap_vcov <- function(data, beta, priorp, xpred, engine="R", threads=1){
 
   n <- nrow(data)
   K <- length(beta)
   na <- 2*K - 1          # theta_1..K, pi_1..K-1
   npar <- na + 1         # plus this SNP's X_j
+
+  if(engine == "rust"){
+    # the same per-variant terms, summed over variants in compiled code
+    # (Problem::info_sums in src/rust/src/lib.rs)
+    sums <- .Call(.magicmap_info_sums,
+                  as.double(data$x), as.double(data$sx), as.double(data$y), as.double(data$sy),
+                  as.double(data$re[1]), as.double(beta), as.double(priorp), as.double(xpred),
+                  as.integer(threads))
+    if(sums$counts[1] > 0){
+      warning("observed information for some predicted target betas is not positive; SEs may be unreliable")
+    }else if(sums$counts[2] > 0){
+      # as if(any(h_xx >= 0)) does below when h_xx has NaN
+      stop("missing value where TRUE/FALSE needed")
+    }
+    return(magicmap_vcov_from_sums(-(sums$h_aa - sums$cross), sums$b, K))
+  }
 
   s1 <- data$sx
   s2 <- data$sy
@@ -55,7 +73,7 @@ magicmap_vcov <- function(data, beta, priorp, xpred){
   }
 
   # posteriors (stable softmax)
-  m <- apply(la, 1, max)
+  m <- .row_max(la)
   P <- exp(la - m)
   P <- P/rowSums(P)
 
@@ -118,6 +136,15 @@ magicmap_vcov <- function(data, beta, priorp, xpred){
   # profiled per-SNP scores for the sandwich
   S_prof <- S[,1:na,drop=FALSE] - h_ax*(S[,npar]/h_xx)
   B <- crossprod(S_prof)
+
+  magicmap_vcov_from_sums(info, B, K)
+}
+
+# Covariances and SEs from the profiled information matrix `info` and the
+# sum of outer products of the profiled per-SNP scores `B`.
+magicmap_vcov_from_sums <- function(info, B, K){
+
+  na <- 2*K - 1
 
   # Components that have collapsed onto the same slope make the information
   # matrix singular. Checked on the unit-free (correlation-scaled) matrix with

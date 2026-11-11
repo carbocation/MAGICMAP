@@ -105,3 +105,76 @@ SEXP C_magicmap_em_starts(
     UNPROTECT(8);
     return output;
 }
+
+extern int magicmap_info_sums(
+    const double *x,
+    const double *sx,
+    const double *y,
+    const double *sy,
+    size_t n,
+    double re,
+    size_t k,
+    const double *beta,
+    const double *priorp,
+    const double *xpred,
+    size_t requested_threads,
+    double *h_aa_out,
+    double *cross_out,
+    double *b_out,
+    int *counts_out);
+
+/* Sums over variants for the standard errors of a fitted model (see
+   magicmap_vcov). Returns list(h_aa, cross, b, counts): three (2k-1) x (2k-1)
+   matrices and c(variants with h_xx >= 0, variants with h_xx NaN). */
+SEXP C_magicmap_info_sums(
+    SEXP x, SEXP sx, SEXP y, SEXP sy, SEXP re, SEXP beta, SEXP priorp,
+    SEXP xpred, SEXP threads) {
+
+    if (!isReal(x) || XLENGTH(x) < 1) {
+        error("'x' must be a non-empty double vector");
+    }
+    R_xlen_t n = XLENGTH(x);
+    check_real_vector(sx, n, "sx");
+    check_real_vector(y, n, "y");
+    check_real_vector(sy, n, "sy");
+    check_real_vector(xpred, n, "xpred");
+    if (!isReal(beta) || XLENGTH(beta) < 1) {
+        error("'beta' must be a non-empty double vector");
+    }
+    R_xlen_t components = XLENGTH(beta);
+    check_real_vector(priorp, components, "priorp");
+
+    double re_value = asReal(re);
+    int threads_value = asInteger(threads);
+    if (!R_FINITE(re_value)) {
+        error("'re' must be finite");
+    }
+    if (threads_value == NA_INTEGER || threads_value < 1) {
+        error("'threads' must be a positive whole number");
+    }
+
+    int na = 2 * (int) components - 1;
+    SEXP h_aa_out = PROTECT(allocMatrix(REALSXP, na, na));
+    SEXP cross_out = PROTECT(allocMatrix(REALSXP, na, na));
+    SEXP b_out = PROTECT(allocMatrix(REALSXP, na, na));
+    SEXP counts_out = PROTECT(allocVector(INTSXP, 2));
+
+    int failed = magicmap_info_sums(
+        REAL(x), REAL(sx), REAL(y), REAL(sy), (size_t) n, re_value,
+        (size_t) components, REAL(beta), REAL(priorp), REAL(xpred),
+        (size_t) threads_value,
+        REAL(h_aa_out), REAL(cross_out), REAL(b_out), INTEGER(counts_out));
+    if (failed != 0) {
+        UNPROTECT(4);
+        error("the Rust standard-error routine failed unexpectedly");
+    }
+
+    const char *names[] = {"h_aa", "cross", "b", "counts", ""};
+    SEXP output = PROTECT(mkNamed(VECSXP, names));
+    SET_VECTOR_ELT(output, 0, h_aa_out);
+    SET_VECTOR_ELT(output, 1, cross_out);
+    SET_VECTOR_ELT(output, 2, b_out);
+    SET_VECTOR_ELT(output, 3, counts_out);
+    UNPROTECT(5);
+    return output;
+}

@@ -17,7 +17,7 @@ component_logdens <- function(data, beta, xpred){
 
 estep_posteriors <- function(data, beta, priorp, xpred){
   llik <- component_logdens(data, beta, xpred) + rep(log(priorp), each=nrow(data))
-  center_ll <- llik-apply(llik,1,max)
+  center_ll <- llik-.row_max(llik)
   out <- exp(center_ll-log(rowSums(exp(center_ll))))
   # out <- signif(out, 12)
   out <- out/rowSums(out)
@@ -85,7 +85,7 @@ Q_loglik_matrix <- function(data, beta, priorp, xpred, postp){
 ll_comp_func <- function(data, beta, priorp, xpred){
   llik <- component_logdens(data, beta, xpred) + rep(log(priorp), each=nrow(data))
   # log-sum-exp across components, so SNPs far from every line don't underflow to -Inf
-  llmax <- apply(llik,1,max)
+  llmax <- .row_max(llik)
   sum_exp <- llmax
   ok <- is.finite(llmax)
   sum_exp[ok] <- llmax[ok] + log(rowSums(exp(llik[ok,,drop=FALSE]-llmax[ok])))

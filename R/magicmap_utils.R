@@ -50,6 +50,12 @@
 
 
 
+# Largest value in each row of a matrix; the same values as apply(m, 1, max),
+# without a call per row.
+.row_max <- function(m){
+  do.call(pmax, lapply(seq_len(ncol(m)), function(j) m[,j]))
+}
+
 # Squared distance from each variant's observed effects to each component's
 # line, in standard error units: (y - b*x)^2 / var(y - b*x). This is the
 # smallest Mahalanobis distance from the point to any position on the line,
@@ -64,7 +70,7 @@
 # posteriors: data frame with x, sx, y, sy in columns 1-4 and ProbClass columns
 .magicmap_assignments <- function(posteriors, slopes, re){
   pp <- as.matrix(posteriors[, grep("^ProbClass", colnames(posteriors)), drop=FALSE])
-  idx <- cbind(seq_len(nrow(pp)), apply(pp, 1, which.max))
+  idx <- cbind(seq_len(nrow(pp)), max.col(pp, ties.method="first"))
   d2 <- .magicmap_line_distance(posteriors[,1], posteriors[,2], posteriors[,3], posteriors[,4], re, slopes)[idx]
   data.frame(component = idx[,2],
              posterior = pp[idx],

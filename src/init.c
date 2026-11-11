@@ -5,9 +5,12 @@
 
 extern SEXP C_magicmap_em_starts(
     SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
+extern SEXP C_magicmap_info_sums(
+    SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 
 static const R_CallMethodDef CallEntries[] = {
     {"magicmap_em_starts", (DL_FUNC) &C_magicmap_em_starts, 11},
+    {"magicmap_info_sums", (DL_FUNC) &C_magicmap_info_sums, 9},
     {NULL, NULL, 0}
 };
 

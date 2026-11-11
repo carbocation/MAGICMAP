@@ -342,6 +342,182 @@ impl<'a> Problem<'a> {
         total
     }
 
+    /// The sums over variants that magicmap_vcov() (R/magicmap_variance.R)
+    /// needs. Each variant's score and Hessian are formed as in the R code,
+    /// with the same order of arithmetic; only the sums over variants are
+    /// added in a different order (by block).
+    ///
+    /// With na = 2k - 1 parameters (k slopes, k - 1 proportions), fills three
+    /// na x na matrices: `h_aa` = sum of the per-variant Hessian blocks,
+    /// `cross` = crossprod(h_ax, h_ax / h_xx) and `b_mat` = crossprod of the
+    /// profiled scores. Returns the number of variants with h_xx >= 0 and the
+    /// number with h_xx NaN.
+    fn info_sums(
+        &self,
+        beta: &[f64],
+        priorp: &[f64],
+        xpred: &[f64],
+        h_aa: &mut [f64],
+        cross: &mut [f64],
+        b_mat: &mut [f64],
+    ) -> (usize, usize) {
+        let k = self.k;
+        let na = 2 * k - 1;
+        let npar = na + 1;
+        let parts = self.blocks(|from, to| {
+            // h_aa, cross, b_mat one after another
+            let mut sums = vec![0.0; 3 * na * na];
+            let mut nonneg = 0usize;
+            let mut nan = 0usize;
+            let mut la = vec![0.0; k];
+            let mut post = vec![0.0; k];
+            let mut u = vec![0.0; k];
+            let mut v = vec![0.0; k];
+            let mut uu = vec![0.0; k];
+            let mut ux = vec![0.0; k];
+            let mut vv = vec![0.0; k];
+            let mut g = vec![0.0; npar];
+            let mut s = vec![0.0; npar];
+            let mut h = vec![0.0; npar * npar];
+            let mut h_ax = vec![0.0; na];
+            let mut s_prof = vec![0.0; na];
+            for i in from..to {
+                let s1sq = self.sx2[i];
+                let s2sq = self.sy2[i];
+                let c12 = self.c12[i];
+                let d = self.det[i];
+                let xp = xpred[i];
+                let r1 = self.x[i] - xp;
+                for c in 0..k {
+                    let b = beta[c];
+                    let r2 = self.y[i] - b * xp;
+                    let q = (s2sq * (r1 * r1) - 2.0 * c12 * r1 * r2 + s1sq * (r2 * r2)) / d;
+                    la[c] = priorp[c].ln() - LN_2PI - 0.5 * d.ln() - 0.5 * q;
+                    u[c] = -(xp / d) * (c12 * r1 - s1sq * r2);
+                    v[c] = (s2sq * r1 - c12 * (r2 + b * r1) + b * s1sq * r2) / d;
+                    uu[c] = -s1sq * (xp * xp) / d;
+                    ux[c] = -(c12 * r1 - s1sq * r2 - xp * c12 + b * xp * s1sq) / d;
+                    vv[c] = -(s2sq - 2.0 * b * c12 + (b * b) * s1sq) / d;
+                }
+
+                // posteriors
+                let mut mx = f64::NEG_INFINITY;
+                let mut any_nan = false;
+                for c in 0..k {
+                    if la[c].is_nan() {
+                        any_nan = true;
+                    } else if la[c] > mx {
+                        mx = la[c];
+                    }
+                }
+                if any_nan {
+                    mx = f64::NAN;
+                }
+                let mut total = 0.0;
+                for c in 0..k {
+                    post[c] = (la[c] - mx).exp();
+                    total += post[c];
+                }
+                for c in 0..k {
+                    post[c] /= total;
+                }
+
+                // score s and Hessian h (upper triangle) of this variant's
+                // log-likelihood in (slopes, proportions 1..k-1, its X)
+                s.fill(0.0);
+                h.fill(0.0);
+                for c in 0..k {
+                    let pc = post[c];
+                    g.fill(0.0);
+                    g[c] = u[c];
+                    if k > 1 {
+                        if c < k - 1 {
+                            g[k + c] = 1.0 / priorp[c];
+                        } else {
+                            for j in k..na {
+                                g[j] = -1.0 / priorp[k - 1];
+                            }
+                        }
+                    }
+                    g[npar - 1] = v[c];
+                    for a in 0..npar {
+                        s[a] += pc * g[a];
+                        if g[a] == 0.0 {
+                            continue;
+                        }
+                        for l in a..npar {
+                            h[a * npar + l] += pc * g[a] * g[l];
+                        }
+                    }
+                    h[c * npar + c] += pc * uu[c];
+                    h[c * npar + npar - 1] += pc * ux[c];
+                    h[(npar - 1) * npar + npar - 1] += pc * vv[c];
+                    if k > 1 {
+                        if c < k - 1 {
+                            h[(k + c) * npar + k + c] -= pc / (priorp[c] * priorp[c]);
+                        } else {
+                            let last = pc / (priorp[k - 1] * priorp[k - 1]);
+                            for a in k..na {
+                                for l in a..na {
+                                    h[a * npar + l] -= last;
+                                }
+                            }
+                        }
+                    }
+                }
+                for a in 0..npar {
+                    for l in a..npar {
+                        h[a * npar + l] -= s[a] * s[l];
+                    }
+                }
+
+                // profile out this variant's X
+                let h_xx = h[(npar - 1) * npar + npar - 1];
+                if h_xx.is_nan() {
+                    nan += 1;
+                } else if h_xx >= 0.0 {
+                    nonneg += 1;
+                }
+                let s_x = s[npar - 1] / h_xx;
+                for a in 0..na {
+                    h_ax[a] = h[a * npar + npar - 1];
+                    s_prof[a] = s[a] - h_ax[a] * s_x;
+                }
+                for a in 0..na {
+                    for l in a..na {
+                        let at = a * na + l;
+                        sums[at] += h[a * npar + l];
+                        sums[na * na + at] += h_ax[a] * (h_ax[l] / h_xx);
+                        sums[2 * na * na + at] += s_prof[a] * s_prof[l];
+                    }
+                }
+            }
+            (sums, nonneg, nan)
+        });
+
+        let mut sums = vec![0.0; 3 * na * na];
+        let mut nonneg = 0;
+        let mut nan = 0;
+        for (part, part_nonneg, part_nan) in &parts {
+            for (total, value) in sums.iter_mut().zip(part) {
+                *total += value;
+            }
+            nonneg += part_nonneg;
+            nan += part_nan;
+        }
+        // fill both triangles (column-major or row-major is then the same)
+        for a in 0..na {
+            for l in a..na {
+                for (m, out) in [&mut *h_aa, &mut *cross, &mut *b_mat].into_iter().enumerate() {
+                    let value = sums[m * na * na + a * na + l];
+                    out[a * na + l] = value;
+                    out[l * na + a] = value;
+                }
+            }
+        }
+        (nonneg, nan)
+    }
+
     /// One EM cycle (em_fixed_point, estimator "MLE"): theta = (b, p, X).
     fn fixed_point(
         &self,
@@ -681,6 +857,58 @@ pub unsafe extern "C" fn magicmap_em_starts(
                 }
             }
         }
+    }));
+    match result {
+        Ok(()) => 0,
+        Err(_) => 1,
+    }
+}
+
+/// Sums over variants for the standard errors (see Problem::info_sums).
+/// `h_aa_out`, `cross_out` and `b_out` are (2k-1) x (2k-1) matrices;
+/// `counts_out` receives the number of variants with h_xx >= 0 and with h_xx
+/// NaN. Returns 0, or 1 if the routine panicked.
+///
+/// # Safety
+/// All pointers must be valid for the lengths implied by n and k.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn magicmap_info_sums(
+    x: *const f64,
+    sx: *const f64,
+    y: *const f64,
+    sy: *const f64,
+    n: usize,
+    re: f64,
+    k: usize,
+    beta: *const f64,
+    priorp: *const f64,
+    xpred: *const f64,
+    requested_threads: usize,
+    h_aa_out: *mut f64,
+    cross_out: *mut f64,
+    b_out: *mut f64,
+    counts_out: *mut i32,
+) -> i32 {
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let x = slice::from_raw_parts(x, n);
+        let sx = slice::from_raw_parts(sx, n);
+        let y = slice::from_raw_parts(y, n);
+        let sy = slice::from_raw_parts(sy, n);
+        let beta = slice::from_raw_parts(beta, k);
+        let priorp = slice::from_raw_parts(priorp, k);
+        let xpred = slice::from_raw_parts(xpred, n);
+        let na = 2 * k - 1;
+        let h_aa = slice::from_raw_parts_mut(h_aa_out, na * na);
+        let cross = slice::from_raw_parts_mut(cross_out, na * na);
+        let b_mat = slice::from_raw_parts_mut(b_out, na * na);
+        let counts = slice::from_raw_parts_mut(counts_out, 2);
+        let threads = worker_count(usize::MAX, requested_threads);
+        // the tolerances and iteration limit are not used by info_sums
+        let problem = Problem::new(x, sx, y, sy, re, k, 0.0, 0, threads);
+        let (nonneg, nan) = problem.info_sums(beta, priorp, xpred, h_aa, cross, b_mat);
+        counts[0] = nonneg.min(i32::MAX as usize) as i32;
+        counts[1] = nan.min(i32::MAX as usize) as i32;
     }));
     match result {
         Ok(()) => 0,
